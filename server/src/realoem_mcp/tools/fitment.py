@@ -198,9 +198,21 @@ async def compare(
             "shows the subgroups of each vehicle."
         )
     a, b = (_side(diagrams, subgroup, diag_ids) for diagrams in lists)
+    used = sum(not page.from_cache for page in pages)
     for side, diag_id in _alternate(a, b):
-        parts, page = await fetch_diagram_parts(services, side.vehicle_id, diag_id, refresh=refresh)
+        fetched = await fetch_diagram_parts(
+            services,
+            side.vehicle_id,
+            diag_id,
+            refresh=refresh,
+            cache_only=used >= max_requests,
+        )
+        if fetched is None:
+            side.unfetched.append(diag_id)
+            continue
+        parts, page = fetched
         pages.append(page)
+        used += not page.from_cache
         side.rows[diag_id] = parts.rows
     return _result(
         pages, a, b, CompareScope(main_group=main_group, subgroup=subgroup, diag_ids=diag_ids)

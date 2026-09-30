@@ -250,3 +250,113 @@ async def test_bad_input_is_rejected_before_any_request(
     defaults = {"vehicle_a": E90, "vehicle_b": R56, "main_group": "11"}
     assert expected in await _error(services, **{**defaults, **arguments})
     assert transport.requests == []
+
+
+async def test_budget_spent_on_the_diagram_lists(make_services: MakeServices) -> None:
+    services, transport = make_services(ROUTES)
+    data = await _data(
+        services, vehicle_a=E90, vehicle_b=E90_0806, main_group="11", subgroup="10", max_requests=2
+    )
+    assert data["complete"] is False
+    assert (data["unfetched_a"], data["unfetched_b"]) == (SUBGROUP_10, SUBGROUP_10)
+    assert (data["in_both"], data["only_a"], data["only_b"]) == ([], [], [])
+    assert data["requests_made"] == 2
+    assert _sent(transport) == [LIST_E90, LIST_0806]
+
+
+async def test_diagrams_alternate_between_the_vehicles(make_services: MakeServices) -> None:
+    services, transport = make_services(ROUTES)
+    data = await _data(
+        services,
+        vehicle_a=E90,
+        vehicle_b=E90_0806,
+        main_group="11",
+        diag_ids=["11_3733", "11_3867"],
+        max_requests=4,
+    )
+    assert _sent(transport) == [LIST_E90, LIST_0806, PAN_E90, PAN_0806]
+    assert (data["complete"], data["unfetched_a"], data["unfetched_b"]) == (
+        False,
+        ["11_3867"],
+        ["11_3867"],
+    )
+    assert len(data["in_both"]) == 11
+
+
+async def test_rerun_continues_from_the_cache(make_services: MakeServices) -> None:
+    services, transport = make_services(ROUTES)
+    arguments = {
+        "vehicle_a": E90,
+        "vehicle_b": R56,
+        "main_group": "11",
+        "diag_ids": ["11_3733", "11_3910"],
+        "max_requests": 3,
+    }
+    first = await _data(services, **arguments)
+    assert (first["complete"], first["unfetched_a"], first["unfetched_b"]) == (
+        False,
+        [],
+        ["11_3910"],
+    )
+    assert _numbers(first["only_a"]) == E90_PAN_PARTS  # B not read yet: partial result
+    assert first["requests_made"] == 3
+    second = await _data(services, **arguments)
+    assert (second["complete"], second["requests_made"], second["from_cache"]) == (True, 1, False)
+    assert _numbers(second["in_both"]) == [LOCTITE]
+    third = await _data(services, **arguments)
+    assert (third["complete"], third["requests_made"], third["from_cache"]) == (True, 0, True)
+    assert third["in_both"] == second["in_both"]
+    assert _sent(transport) == [LIST_E90, LIST_R56, PAN_E90, PAN_R56]
+
+
+async def test_cached_diagrams_are_read_after_the_budget_is_spent(
+    make_services: MakeServices,
+) -> None:
+    services, transport = make_services(ROUTES)
+    async with Client(build_server(services)) as client:
+        await client.call_tool("get_diagram_parts", {"vehicle_id": R56, "diag_id": "11_3910"})
+    data = await _data(
+        services,
+        vehicle_a=E90,
+        vehicle_b=R56,
+        main_group="11",
+        diag_ids=["11_3733", "11_3910"],
+        max_requests=2,
+    )
+    assert (data["complete"], data["unfetched_a"], data["unfetched_b"]) == (
+        False,
+        ["11_3733"],
+        [],
+    )
+    assert _numbers(data["only_b"]) == R56_PAN_PARTS
+    assert data["source_urls"] == [LIST_E90, LIST_R56, PAN_R56]
+    assert (data["requests_made"], data["from_cache"]) == (2, False)
+    assert _sent(transport) == [PAN_R56, LIST_E90, LIST_R56]
+
+
+async def test_subgroup_on_one_vehicle_only(make_services: MakeServices) -> None:
+    services, _ = make_services(ROUTES)
+    data = await _data(
+        services, vehicle_a=E90, vehicle_b=R56, main_group="11", subgroup="50", max_requests=2
+    )
+    # the E90 has no subgroup 50 (exhaust manifold) in main group 11; the R56 has three diagrams
+    assert (data["unfetched_a"], data["unfetched_b"]) == ([], ["11_3944", "11_3945", "11_6649"])
+    assert data["complete"] is False
+
+
+async def test_refresh_refetches_within_the_budget_and_reads_the_rest_from_cache(
+    make_services: MakeServices,
+) -> None:
+    services, transport = make_services(ROUTES)
+    arguments = {
+        "vehicle_a": E90,
+        "vehicle_b": R56,
+        "main_group": "11",
+        "diag_ids": ["11_3733", "11_3910"],
+    }
+    await _data(services, **arguments)  # primes the cache: 4 requests
+    data = await _data(services, **arguments, refresh=True, max_requests=3)
+    assert (data["complete"], data["requests_made"], data["from_cache"]) == (True, 3, False)
+    assert _numbers(data["in_both"]) == [LOCTITE]
+    # both lists and A's diagram are refetched; B's diagram comes from the cache
+    assert _sent(transport) == [LIST_E90, LIST_R56, PAN_E90, PAN_R56, LIST_E90, LIST_R56, PAN_E90]
