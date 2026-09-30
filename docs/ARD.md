@@ -395,6 +395,10 @@ and parts lists are filtered by the id's month. For fitment on a specific car, u
   every `register` it finds (AD15), so feature branches add a module without editing `server.py`.
 - Tool functions are `async`, have docstrings written for the model (when to use, inputs, what comes
   back), catch `RealOemError` → `ToolError`, and return pydantic models.
+- **Never keep an unparseable page cached:** pages are cached by the client before parsing, so when a
+  parser raises `LayoutChanged` for a fetched page, the calling tool/helper runs
+  `services.cache.shorten(page.url, timedelta(0))` (expires it immediately) before re-raising. Each
+  feature tests this (serve a broken page twice → two requests).
 - Every **data** tool result extends `ResultMeta` (admin tools `server_status` and `cache_clear` are
   exempt):
 
