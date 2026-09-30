@@ -46,7 +46,7 @@ class Route:
     fixture: str | None = None  # path under fixtures/, or None for an empty body
     status: int = 200
     headers: dict[str, str] = field(default_factory=dict)
-    redirect_to: str | None = None  # emits a 301 to this URL
+    redirect_to: str | None = None  # emits a 301 to this URL; may be relative to the route URL
 
 
 class FixtureTransport(httpx.AsyncBaseTransport):
@@ -58,7 +58,9 @@ class FixtureTransport(httpx.AsyncBaseTransport):
             for key, value in routes.items()
         }
         self.redirect_targets = {
-            _normalize(route.redirect_to) for route in self.routes.values() if route.redirect_to
+            _normalize(str(httpx.URL(key).join(route.redirect_to)))
+            for key, route in self.routes.items()
+            if route.redirect_to
         }
         self.requests: list[httpx.Request] = []
         self.unmatched: list[str] = []
@@ -74,12 +76,13 @@ class FixtureTransport(httpx.AsyncBaseTransport):
             return httpx.Response(
                 UNMATCHED_STATUS, text=f"unexpected request: {key}", request=request
             )
-        headers = dict(route.headers)
+        headers = httpx.Headers(route.headers)
         if route.redirect_to is not None:
             headers["Location"] = route.redirect_to
             return httpx.Response(301, headers=headers, content=b"", request=request)
         body = load_fixture(route.fixture).encode("utf-8") if route.fixture else b""
-        headers.setdefault("Content-Type", "text/html;charset=UTF-8")
+        if "content-type" not in headers:
+            headers["Content-Type"] = "text/html;charset=UTF-8"
         return httpx.Response(route.status, headers=headers, content=body, request=request)
 
 

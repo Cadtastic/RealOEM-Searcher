@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from scripts.trim_fixture import main, mask_vins, trim
+from scripts.trim_fixture import main, mask_vins, strip_session_ids, trim
 
 RAW = """<!DOCTYPE html>
 <html><head>
@@ -112,3 +112,12 @@ def test_cli_writes_trimmed_file(tmp_path: Path) -> None:
     out = tmp_path / "fixtures" / "partgrp" / "sample.html"
     assert main([str(raw), str(out)]) == 0
     assert out.read_text(encoding="utf-8") == trim(RAW)
+
+
+def test_jsessionid_stops_at_markup_and_other_delimiters() -> None:
+    out = trim("<p>see http://x/a;jsessionid=ABC</p>")
+    assert "<p>see http://x/a</p>" in out
+    assert trim(out) == out
+    assert strip_session_ids("/a;jsessionid=Z;foo=1?q") == "/a;foo=1?q"
+    assert strip_session_ids("/a;jsessionid=Z&amp;x=1") == "/a&amp;x=1"
+    assert strip_session_ids("x/a;jsessionid=Z<b>") == "x/a<b>"

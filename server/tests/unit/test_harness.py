@@ -85,3 +85,24 @@ async def test_fake_clock_advances_on_sleep() -> None:
     await clock.sleep(2.5)
     assert clock() == 12.5
     assert clock.sleeps == [2.5]
+
+
+async def test_relative_redirect_is_resolved_against_the_route_url() -> None:
+    target = url("partgrp", id="VB13")
+    transport = FixtureTransport({target: Route(redirect_to="/bmw/")})
+    async with httpx.AsyncClient(transport=transport, follow_redirects=True) as http:
+        response = await http.get(target)
+    assert response.status_code == 200
+    assert str(response.url) == LANDING_URL
+    assert response.text == ""
+    assert [str(r.url) for r in transport.requests] == [target, LANDING_URL]
+    assert transport.unmatched == []
+
+
+async def test_route_headers_are_case_insensitive() -> None:
+    target = url("partgrp", id="VB13")
+    route = Route("common/partgrp_e90_325i.html", headers={"content-type": "text/plain"})
+    transport = FixtureTransport({target: route})
+    async with httpx.AsyncClient(transport=transport) as http:
+        response = await http.get(target)
+    assert response.headers.get_list("content-type") == ["text/plain"]

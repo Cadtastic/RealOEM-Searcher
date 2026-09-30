@@ -22,7 +22,7 @@ _VIN = re.compile(
     r"(?![A-Za-z0-9])"
 )
 # Servlet session id path parameter, e.g. /bmw/login;jsessionid=9EDE...?next=%2f
-_JSESSIONID = re.compile(r";jsessionid=[^?#\"'\s>]*", re.IGNORECASE)
+_JSESSIONID = re.compile(r";jsessionid=[^?#;&<>\"'\s]*", re.IGNORECASE)
 _REMOVE = "style, iframe, ins, [id^='realoem-com_']"
 _ECS_KEEP = ("class", "data-ecs-part-name")
 _BLANK_LINES = re.compile(r"\n[ \t\r\n]*\n")
