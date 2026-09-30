@@ -43,7 +43,7 @@ async def test_e90_rows_carry_vehicle_body_engine_and_diagram(services: Services
             vehicle_id="VB13-USA-02_2004_E90_BMW_325i",
             type_code="VB13",
             market="USA",
-            production_month="2004-02",  # nominal: series start, not a build month
+            production_month="2004-02",  # nominal production start; RealOEM treats it as undated
             series="E90",
             brand="bmw",
             model="325i",

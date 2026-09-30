@@ -16,8 +16,8 @@ production month, type code) and a vehicle id that the other RealOEM tools accep
    - Add `include_production=true` only when the user asks when the vehicle was built or how many
      were made; it costs one more request. If RealOEM's production page cannot be read, the whole
      call fails; call `decode_vin` again without `include_production` to still get the vehicle.
-   - Use `refresh=true` only if the user says the answer looks out of date (results are cached
-     for 180 days).
+   - Use `refresh=true` only if the user says the answer looks out of date (found VINs are
+     cached for 180 days, not-found results for 1 day).
 2. If the tool returns an error about the input, show it and ask for the VIN again. VINs never
    contain the letters I, O or Q; a "0" or "1" typed as a letter is the usual mistake.
 3. `status` is `not_found`: RealOEM has no vehicle for that serial. Ask the user to check the last 7
@@ -50,13 +50,13 @@ of guessing, and suggest a BMW dealer or a dedicated VIN decoder for option code
 
 ## Next steps
 
-Use `vehicle.vehicle_id` from this result with the other RealOEM tools, if they are available:
+Use `vehicle.vehicle_id` from this result with the other RealOEM tools:
 
 - Parts diagrams for this vehicle: `list_part_groups` with the vehicle id.
 - Does a part fit this vehicle: `check_fitment` with the part number and the vehicle id.
 
-Prefer this vehicle id over ids from part lookups: it carries the vehicle's own production month,
-and RealOEM filters parts lists by that month.
+Prefer this vehicle id over ids from `lookup_part` rows or `find_vehicle`: it carries the
+vehicle's own production month, and RealOEM filters parts lists by that month.
 
 ## Rules
 

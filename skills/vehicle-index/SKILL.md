@@ -57,8 +57,8 @@ and stored on this computer. Searching it is free: `find_vehicle` never contacts
 
 `find_vehicle` results feed the diagram tools: pass `vehicle.vehicle_id` to
 `list_part_groups(vehicle_id)` to list the vehicle's main groups, then `list_diagrams` and
-`get_diagram_parts`, if those tools are available. For fitment questions pass the same id to
-`check_fitment`.
+`get_diagram_parts`. For fitment on the user's own car, prefer a `decode_vin` or `select_vehicle`
+id; a `find_vehicle` id answers for the model's production start.
 
 ## Rules
 

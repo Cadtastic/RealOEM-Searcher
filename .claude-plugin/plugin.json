@@ -1,11 +1,24 @@
 {
   "name": "realoem-searcher",
+  "displayName": "RealOEM Searcher",
   "version": "0.1.0",
-  "description": "Search and cross-reference BMW, MINI, Rolls-Royce and BMW Motorrad OEM part numbers on RealOEM.com",
+  "description": "Look up BMW, MINI, Rolls-Royce and BMW Motorrad parts on RealOEM.com: part numbers and supersession chains, VIN decoding, parts diagrams, fitment checks, vehicle comparison and a local vehicle finder.",
   "author": { "name": "Cadtastic" },
   "homepage": "https://github.com/Cadtastic/RealOEM-Searcher",
   "repository": "https://github.com/Cadtastic/RealOEM-Searcher",
   "license": "MIT",
+  "keywords": [
+    "bmw",
+    "mini",
+    "rolls-royce",
+    "motorrad",
+    "realoem",
+    "oem-parts",
+    "part-numbers",
+    "vin-decoder",
+    "parts-diagrams",
+    "mcp"
+  ],
   "mcpServers": {
     "realoem": {
       "command": "uv",

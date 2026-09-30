@@ -28,7 +28,7 @@ class SeriesUse(BaseModel):
 
 
 class ModelUse(BaseModel):
-    vehicle: VehicleRef  # id from the link; its date is the series start, not a build month
+    vehicle: VehicleRef  # id from the link; its nominal date is ignored by RealOEM (undated)
     body: str | None
     engine: str | None
     diagram: DiagramRef

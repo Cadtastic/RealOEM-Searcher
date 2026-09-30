@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | Approved for implementation |
+| Status | Implemented (v0.1.0) |
 | Owner | Cadtastic |
 | Repository | https://github.com/Cadtastic/RealOEM-Searcher |
 | Last updated | 2026-09-30 |
@@ -53,8 +53,8 @@ reported as shown by RealOEM (always USD).
 
 ## 5. Features
 
-Each feature ships on its own branch and pull request, in this order: F0, F1, F2, F3, F6, F4, F5.
-`feat/foundation` is a prerequisite for all of them.
+All features ship in v0.1.0, each built on its own branch and pull request. `feat/foundation` was a
+prerequisite for all of them.
 
 ### F0: Foundation (`feat/foundation`)
 
@@ -71,8 +71,8 @@ registry, fixture tooling, CI.
   (default 2 s, configurable; never below 1 s), identifies itself honestly with a
   `RealOEM-Searcher/<version> (+repo URL)` user agent, sends only the `ro_ui=v2` cookie, and never sends
   `dmode=0`.
-- F0.4 Responses are cached in SQLite in the user's cache directory with per-page-type TTLs; every data
-  tool accepts `refresh=true`; a `cache_clear` tool exists.
+- F0.4 Responses are cached in SQLite in the user's cache directory with per-page-type TTLs; every tool
+  that reads cached pages accepts `refresh=true`; a `cache_clear` tool exists.
 - F0.5 A Cloudflare challenge produces a clear error telling the user RealOEM is blocking automated
   requests. The server never retries through or works around a challenge.
 - F0.6 A `server_status` tool reports version, cache location/size and request settings.
@@ -153,9 +153,9 @@ type code without walking the model cascade.
 | ID | Requirement |
 |---|---|
 | NFR1 Politeness | ≥ 2 s between requests to RealOEM by default; one request in flight at a time per server process; no background or speculative fetching. |
-| NFR2 Caching | Repeat questions within a TTL cause zero requests. TTLs: catalog structure and diagram pages 30 days, part lookups 7 days, VIN results 180 days. |
+| NFR2 Caching | Repeat questions within a TTL cause zero requests. TTLs: catalog structure and diagram pages 30 days, part lookups 7 days, VIN results 180 days (VIN misses 1 day), production statistics 180 days; vehicles index pages are stored for 1 day, but `update_vehicle_index` always fetches them fresh. |
 | NFR3 Correctness | A parser that finds an unexpected page structure raises `LayoutChanged` instead of returning partial or guessed data. |
-| NFR4 Traceability | Every data tool result includes the RealOEM `source_urls` and `fetched_at` (admin tools `server_status`/`cache_clear` excepted). |
+| NFR4 Traceability | Every data tool result includes the RealOEM `source_urls` and `fetched_at` (admin tools `server_status`/`cache_clear` and the local-only `find_vehicle` excepted; its result has no `source_urls` or `fetched_at`). |
 | NFR5 Latency | Single-lookup tools answer in < 5 s when uncached (dominated by the rate limit). |
 | NFR6 Testability | Parsers are tested offline against trimmed real-page fixtures; CI needs no network. Live smoke tests are opt-in. |
 | NFR7 Portability | Runs on Windows, macOS and Linux with Python ≥ 3.11 managed by `uv`. |

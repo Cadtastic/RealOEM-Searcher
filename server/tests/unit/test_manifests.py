@@ -22,7 +22,7 @@ def test_marketplace_lists_this_repo_as_the_plugin() -> None:
     assert MARKETPLACE["name"] == "realoem-searcher"
     assert MARKETPLACE["owner"] == {"name": "Cadtastic"}
     (entry,) = MARKETPLACE["plugins"]
-    assert (entry["name"], entry["source"]) == ("realoem-searcher", ".")
+    assert (entry["name"], entry["source"]) == ("realoem-searcher", "./")
 
 
 def test_mcp_server_launches_the_console_script_with_uv() -> None:
