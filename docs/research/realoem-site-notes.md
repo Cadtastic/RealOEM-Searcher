@@ -206,6 +206,12 @@ model become `_` and commas are kept.
   **The hit names the part number actually used on the car**, which may differ from `q` (supersession
   resolved: querying predecessor 11427566327 on VB13 → hit names 11427953129).
 - Also `<a href=".../partxref?id=..&q=..">Other models with this part</a>`.
+- Checked live 2026-09-30 (raw: `.research-raw/partsearch2/`):
+  - **Unknown part** (`q=11426666661` on a valid vehicle): **301 → `partgrp?id=<vid>&nfpn=<pn>`** (no error
+    div). Detect: redirected away to `partgrp` with an `nfpn` parameter → part not found.
+  - **Invalid vehicle id** (`id=ZZ99-USA-01-1990-…`): **301 → `/bmw/enUS/select`**. Detect: redirected away
+    to `select` → vehicle not found.
+  - **Dated id** (`VB13-USA-10-2005-E90-BMW-325i`) works; hit links then carry the dated id.
 
 ---
 

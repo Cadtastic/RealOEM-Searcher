@@ -814,5 +814,6 @@ after earlier branches merge and any conflict is resolved there.
 
 ## 10. Open questions carried into plans
 
-- `partsearch` behavior for an invalid vehicle id was not observed (D plan: capture and handle).
+- ~~`partsearch` behavior for an invalid vehicle id~~ — resolved 2026-09-30: unknown part → 301 to
+  `partgrp?id=…&nfpn=<pn>`; invalid vehicle → 301 to `select` (site notes §3.8).
 - See also [site notes §6](research/realoem-site-notes.md#6-open-questions).
