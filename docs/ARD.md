@@ -290,8 +290,10 @@ Behavior:
 7. Only HTTP 200 pages are cached. The redirect-to-landing case (final URL path `/bmw/` or `/bmw/enUS/`
    without the requested path) is returned uncached with `final_url` set; callers turn it into
    `NotFound`. Helper: `page.redirected_away` (final path does not end with the requested path).
-8. A retried request counts once. A call's own network usage is the number of returned pages with
-   `from_cache=False`; tools compute `ResultMeta.requests_made` from the pages they used, never from the
+8. Two different counts: the client's process-wide `requests_made` (shown by `server_status`) counts
+   **every HTTP request actually sent**, including retries, redirect hops, challenges and failures.
+   A tool call's `ResultMeta.requests_made` counts **pages** it used with `from_cache=False` (a page that
+   needed retries or a redirect still counts once); tools compute it from their pages, never from the
    global counter.
 
 ### 5.6 Cache (`cache.py`)
