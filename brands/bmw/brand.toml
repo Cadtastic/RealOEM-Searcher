@@ -1,0 +1,10 @@
+id = "bmw"
+display_name = "BMW"
+product = "P"                         # P = cars, M = motorcycles
+id_brand_segments = ["BMW", "Zinoro"] # vehicle-id brand segment(s); Zinoro = BMW Brilliance
+series_patterns = []                  # fallback brand for cars: matches nothing explicitly
+label_keywords = []
+wmi = ["WBA", "WBS", "WBY", "WBX", "5UX", "5UM", "5YM", "4US", "3MW", "LBV"]
+notes = "Fallback for every car series not claimed by another brand. LCI series end in N (E90N)."
+dedupe_repeated_names = false
+priority = 100                        # lower = checked first when matching series patterns

@@ -1,0 +1,21 @@
+{
+  "name": "realoem-searcher",
+  "owner": {
+    "name": "Cadtastic"
+  },
+  "description": "RealOEM Searcher: BMW Group OEM parts lookups on RealOEM.com for Claude",
+  "plugins": [
+    {
+      "name": "realoem-searcher",
+      "source": ".",
+      "description": "Search and cross-reference BMW, MINI, Rolls-Royce and BMW Motorrad OEM part numbers on RealOEM.com",
+      "version": "0.1.0",
+      "author": {
+        "name": "Cadtastic"
+      },
+      "homepage": "https://github.com/Cadtastic/RealOEM-Searcher",
+      "repository": "https://github.com/Cadtastic/RealOEM-Searcher",
+      "license": "MIT"
+    }
+  ]
+}

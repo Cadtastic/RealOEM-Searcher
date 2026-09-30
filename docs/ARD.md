@@ -156,7 +156,7 @@ RealOEM-Searcher/
   "mcpServers": {
     "realoem": {
       "command": "uv",
-      "args": ["run", "--quiet", "--directory", "${CLAUDE_PLUGIN_ROOT}/server", "realoem-mcp"],
+      "args": ["run", "--quiet", "--no-dev", "--frozen", "--directory", "${CLAUDE_PLUGIN_ROOT}/server", "realoem-mcp"],
       "env": { "REALOEM_BRANDS_DIR": "${CLAUDE_PLUGIN_ROOT}/brands" }
     }
   }
@@ -166,6 +166,8 @@ RealOEM-Searcher/
 - Skills load from the default `skills/` folder. If a brand-specific skill is ever needed, add
   `"skills": ["./skills", "./brands/<brand>/skills"]` (the field supplements the default folder) in that
   change; do not list folders that don't exist.
+- `--no-dev` keeps test/lint tools out of users' plugin environments; `--frozen` runs from the
+  committed `uv.lock` without re-locking in the plugin cache.
 - Tools are exposed to Claude as `mcp__plugin_realoem-searcher_realoem__<tool>`; skills refer to them by
   short name (`lookup_part`).
 - `marketplace.json`: `{"name": "realoem-searcher", "owner": {"name": "Cadtastic"}, "plugins": [{"name":

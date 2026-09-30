@@ -1,0 +1,10 @@
+id = "rolls-royce"
+display_name = "Rolls-Royce"
+product = "P"                         # P = cars, M = motorcycles
+id_brand_segments = ["Rolls_Royce"]   # vehicle-id brand segment(s); contains the "_" separator
+series_patterns = ['^RR\d+N?$', '^R[12]\dN$']
+label_keywords = ["Rolls-Royce", "Phantom", "Ghost", "Wraith", "Dawn", "Cullinan", "Spectre"]
+wmi = ["SCA"]
+notes = "Vehicle ids use the brand segment Rolls_Royce. LCI series can look like R11N / R21N."
+dedupe_repeated_names = false
+priority = 20                         # lower = checked first when matching series patterns
