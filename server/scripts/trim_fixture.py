@@ -21,6 +21,8 @@ _VIN = re.compile(
     r"[A-HJ-NPR-Z0-9]{17}"
     r"(?![A-Za-z0-9])"
 )
+# Servlet session id path parameter, e.g. /bmw/login;jsessionid=9EDE...?next=%2f
+_JSESSIONID = re.compile(r";jsessionid=[^?#\"'\s>]*", re.IGNORECASE)
 _REMOVE = "style, iframe, ins, [id^='realoem-com_']"
 _ECS_KEEP = ("class", "data-ecs-part-name")
 _BLANK_LINES = re.compile(r"\n[ \t\r\n]*\n")
@@ -29,6 +31,11 @@ _BLANK_LINES = re.compile(r"\n[ \t\r\n]*\n")
 def mask_vins(html: str) -> str:
     """Replace every 17-character VIN with XXXXXXXXXX + its last 7 characters."""
     return _VIN.sub(lambda m: "XXXXXXXXXX" + m.group(0)[-7:], html)
+
+
+def strip_session_ids(html: str) -> str:
+    """Drop ;jsessionid=<value> path parameters, keeping the rest of the URL."""
+    return _JSESSIONID.sub("", html)
 
 
 def _keep_script(script: LexborNode) -> bool:
@@ -70,7 +77,7 @@ def trim(html: str) -> str:
             del button.attrs[name]
     _drop_trailing_whitespace(tree.body)
     compact = _BLANK_LINES.sub("\n", tree.html or "")
-    return mask_vins(compact).strip() + "\n"
+    return mask_vins(strip_session_ids(compact)).strip() + "\n"
 
 
 def main(argv: list[str] | None = None) -> int:

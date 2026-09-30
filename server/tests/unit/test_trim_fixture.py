@@ -24,6 +24,9 @@ RAW = """<!DOCTYPE html>
 <p>VIN WBATEST0000000001 and serial 0000001</p>
 <a href="/login?next=%2fselect%3fvin%3dWBATEST0000000001">Sign In</a>
 <a href="/share?u=%2fvin%2FWBATEST0000000001">Share</a>
+<a href="/bmw/login;jsessionid=9EDE675D8C3F8EB91A2B?next=%2f">Log in</a>
+<a href='/bmw/logout;JSESSIONID=ABC123#top'>Out</a>
+<form action="/bmw/search;jsessionid=DEF456"></form>
 </div>
 <table id="partsList"><tr class="pos01"><td>01</td>
 <td class="ecs-tuning-cell"> <a class="ecs-tuning-link" data-ecs-part-name="Oil Pan"
@@ -77,6 +80,15 @@ def test_masks_full_vins_everywhere() -> None:
     assert "vin%2FXXXXXXXXXX0000001" in out
 
 
+def test_strips_jsessionid_but_keeps_the_rest_of_the_url() -> None:
+    out = trim(RAW)
+    assert "jsessionid" not in out.lower()
+    assert "9EDE675D8C3F8EB91A2B" not in out
+    assert '<a href="/bmw/login?next=%2f">Log in</a>' in out
+    assert '<a href="/bmw/logout#top">Out</a>' in out
+    assert '<form action="/bmw/search"></form>' in out
+
+
 def test_mask_vins_leaves_part_numbers_and_words_alone() -> None:
     text = "11427953129 ABCDEFGHJKLMNPRST 12345678901234567 WBATEST0000000001X"
     assert mask_vins(text) == text
@@ -86,6 +98,12 @@ def test_trim_is_idempotent() -> None:
     once = trim(RAW)
     assert trim(once) == once
     assert once.endswith("</html>\n")
+
+
+def test_trim_with_jsessionid_is_idempotent() -> None:
+    once = trim(RAW)
+    assert "jsessionid" not in once.lower()
+    assert trim(once) == once
 
 
 def test_cli_writes_trimmed_file(tmp_path: Path) -> None:
