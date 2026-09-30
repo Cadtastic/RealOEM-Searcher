@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import re
 import time
 from collections.abc import Awaitable, Callable, Mapping
@@ -17,7 +18,7 @@ from urllib.request import Request
 import httpx
 
 from realoem_mcp.config import Settings
-from realoem_mcp.errors import UpstreamError
+from realoem_mcp.errors import BotChallenge, LayoutChanged, UpstreamError
 from realoem_mcp.page_types import PageType
 
 if TYPE_CHECKING:
@@ -27,6 +28,10 @@ log = logging.getLogger(__name__)
 
 COOKIE = "ro_ui=v2"
 MAX_REDIRECTS = 3
+MAX_RETRIES = 2
+RETRY_DELAYS_S = (5.0, 15.0)
+RETRY_AFTER_CAP_S = 30.0
+CHALLENGE_TITLE = "<title>Just a moment...</title>"
 _PATH_RE = re.compile(r"[a-z]+")
 _PAGE_TYPE = "realoem_page_type"  # request extension keys (httpx keeps them across redirects)
 _STARTED = "realoem_started"
@@ -156,13 +161,32 @@ class RealOemClient:
             return page
 
     async def _get_with_retries(self, page_type: PageType, url: str) -> httpx.Response:
-        # Task 11 adds challenge detection, retries and the X-RO-UI check here.
-        try:
-            return await self._send(page_type, url)
-        except _OffsiteRedirect as exc:
-            raise UpstreamError(None, url, f"redirected off-site to {exc.target}") from None
-        except httpx.RequestError as exc:  # network, decoding, too many redirects
-            raise UpstreamError(None, url, type(exc).__name__) from None
+        attempt = 0
+        while True:
+            try:
+                response = await self._send(page_type, url)
+            except httpx.TimeoutException:
+                if attempt >= MAX_RETRIES:
+                    raise UpstreamError(None, url, "timed out") from None
+                await self._sleep(RETRY_DELAYS_S[attempt])
+                attempt += 1
+                continue
+            except _OffsiteRedirect as exc:
+                raise UpstreamError(None, url, f"redirected off-site to {exc.target}") from None
+            except httpx.RequestError as exc:  # network, decoding, too many redirects
+                raise UpstreamError(None, url, type(exc).__name__) from None
+            if _is_challenge(response):
+                raise BotChallenge(url)
+            if response.status_code == 429 or response.status_code >= 500:
+                if attempt >= MAX_RETRIES:
+                    raise UpstreamError(response.status_code, url)
+                await self._sleep(_retry_delay(response, attempt))
+                attempt += 1
+                continue
+            ui = response.headers.get("X-RO-UI")
+            if ui is not None and not ui.startswith("v2"):
+                raise LayoutChanged(page_type, f"X-RO-UI is {ui!r}, expected v2", url)
+            return response
 
     async def _send(self, page_type: PageType, url: str) -> httpx.Response:
         try:
@@ -197,3 +221,22 @@ class RealOemClient:
 
     async def aclose(self) -> None:
         await self._http.aclose()
+
+
+def _is_challenge(response: httpx.Response) -> bool:
+    if (
+        response.status_code in (403, 503)
+        and response.headers.get("cf-mitigated", "").lower() == "challenge"
+    ):
+        return True
+    return CHALLENGE_TITLE in response.text
+
+
+def _retry_delay(response: httpx.Response, attempt: int) -> float:
+    try:
+        seconds = float(response.headers.get("Retry-After", ""))
+    except ValueError:
+        return RETRY_DELAYS_S[attempt]
+    if not math.isfinite(seconds):
+        return RETRY_DELAYS_S[attempt]
+    return min(max(seconds, 0.0), RETRY_AFTER_CAP_S)
