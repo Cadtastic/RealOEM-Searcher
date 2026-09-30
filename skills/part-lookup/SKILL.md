@@ -14,8 +14,8 @@ MCP tools, which rate-limit, cache and parse RealOEM for you.
 - The user gives a part number: "What is 11427953129?", "Is 11427541827 still current?",
   "What replaced 12120034087?", "Which cars use 11 42 7 566 327?".
 - The user asks what fits or which models use a part they already identified.
-- For "does part X fit my car" with a specific vehicle or VIN, prefer the fitment tools when they
-  are available; `lookup_part` lists series and vehicles, not one car's build.
+- For "does part X fit my car" with a specific vehicle or VIN, use `check_fitment` (fitment
+  skill); `lookup_part` lists series and vehicles, not one car's build.
 
 ## Steps
 
@@ -45,17 +45,17 @@ MCP tools, which rate-limit, cache and parse RealOEM for you.
 6. Supersession: `superseded_by` lists every successor with dates and remarks (the list is already
    transitive). The successor with an empty `valid_to` is the current replacement; intermediates can
    be short-lived. "Exchangeable retrospectively" means the new part also fits older vehicles.
-   `supersedes` lists earlier numbers. If a `trace_supersession` tool is available, use it for the
-   full chain with dates; otherwise look up the open-ended successor with `lookup_part` if the user
-   wants its details.
+   `supersedes` lists earlier numbers. Use `trace_supersession` for the full chain with dates; look
+   up the open-ended successor with `lookup_part` if the user wants its details.
 
 ## Rules
 
 - Always cite RealOEM: include the `source_urls` of every result you used, and diagram links from
   `diagram.url` when you mention a diagram.
 - Never call a part discontinued because of a page title; only `status` and `superseded_by` count.
-- Vehicle ids from series rows carry the series start month, not a specific car's build month. For a
-  particular car, get its vehicle id from `decode_vin` or `select_vehicle` when those tools exist.
+- Vehicle ids in `part.models` rows carry a nominal date that RealOEM ignores (it treats them as
+  undated), not a specific car's build month. For a particular car, get its vehicle id from
+  `decode_vin` or `select_vehicle`.
 - If a tool reports that a RealOEM page "did not have the expected structure", retry once with
   `refresh=true`; if it fails again, tell the user the plugin needs an update and give the URL.
 - Call tools only for what the user asked. Results are cached; pass `refresh=true` only when the

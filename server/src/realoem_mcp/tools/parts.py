@@ -83,9 +83,10 @@ def register(app: MCPServer, services: Services) -> None:
         "not_found", plus part: description (may be null), supplier_ref, weight_kg,
         valid_from/valid_to, superseded_by and supersedes (with dates and remarks), series
         (each with code, name, brand and production range; plain lookup) or models (vehicle id,
-        body, engine and diagram link per row; with series). Model vehicle ids carry the
-        series start month, not a specific car's build month. Cite source_urls. One request
-        to RealOEM, none when cached; refresh=true fetches a fresh copy.
+        body, engine and diagram link per row; with series). Model vehicle ids carry a
+        nominal date RealOEM ignores (it treats them as undated), not a specific car's build
+        month. Cite source_urls. One request to RealOEM, none when cached; refresh=true fetches
+        a fresh copy.
         """
         try:
             query = normalize(part_number)

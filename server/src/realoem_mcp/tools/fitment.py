@@ -270,8 +270,8 @@ def register(app: MCPServer, services: Services) -> None:
 
         part_number: 11 digits or the 7-digit short form (spaces, dashes, dots are fine).
         vehicle_id: from decode_vin or select_vehicle (the car's own production month; ids
-        from lookup_part rows or find_vehicle carry a series or production start month, not
-        the car's build month). Returns fits, the
+        from lookup_part rows are treated as undated, and find_vehicle ids carry the model's
+        production-start month, not the car's build month). Returns fits, the
         diagrams showing the part on this vehicle, and used_part_numbers: the numbers
         RealOEM names on those diagrams. When they differ from query, RealOEM resolved a
         supersession (the vehicle uses the newer number). Also description, price_usd,

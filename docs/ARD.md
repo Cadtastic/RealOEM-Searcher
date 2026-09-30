@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | Approved for implementation |
+| Status | Implemented (v0.1.0) |
 | Last updated | 2026-09-30 |
 | Companion docs | [PRD](PRD.md), [RealOEM site notes](research/realoem-site-notes.md), [implementation plans](superpowers/plans/) |
 
@@ -19,7 +19,7 @@ the software is built.
 ```mermaid
 flowchart LR
     U[User] --> C[Claude]
-    C -- reads --> S[Skills<br/>skills/*, brands/*/skills]
+    C -- reads --> S[Skills<br/>skills/*]
     C -- MCP tool calls (stdio) --> M[realoem MCP server<br/>server/]
     M --> T[Tools layer]
     T --> P[Parsers]
@@ -39,7 +39,7 @@ flowchart LR
 | # | Decision | Rationale | Alternatives rejected |
 |---|---|---|---|
 | AD1 | Plugin bundling a local stdio **MCP server** plus **skills** | One long-lived process can enforce a single rate limit and hold cache handles; typed tools isolate fragile HTML parsing; server works in any MCP client; skills add workflow knowledge | Skills + CLI scripts (no shared rate limit, per-call process start); MCP only (no BMW workflow guidance) |
-| AD2 | **Python ≥ 3.11**, packaged with **uv**, launched by `uv run --directory ${CLAUDE_PLUGIN_ROOT}/server realoem-mcp` | Good HTML tooling; uv installs deps on first run; no PyPI release needed | C#/.NET (runtime distribution); TypeScript |
+| AD2 | **Python ≥ 3.11**, packaged with **uv**, launched by `uv run --quiet --no-dev --frozen --directory ${CLAUDE_PLUGIN_ROOT}/server realoem-mcp` | Good HTML tooling; uv installs deps on first run; no PyPI release needed | C#/.NET (runtime distribution); TypeScript |
 | AD3 | Official **`mcp` SDK 2.x** (`mcp.server.mcpserver.MCPServer`) | Maintained reference SDK; pydantic return types become structured output; in-memory `mcp.Client` for tests | SDK 1.x `FastMCP` (superseded); third-party `fastmcp` |
 | AD4 | **httpx** (async) for HTTP, **selectolax** for HTML | Fast, small, typed; `httpx.MockTransport` makes the client testable without extra libraries | requests (sync), BeautifulSoup (slower, looser) |
 | AD5 | **Cache raw pages** (not parsed results) in **SQLite**, keyed by request URL, TTL by page type | Parser fixes apply to cached data immediately; one simple table; stdlib `sqlite3`; survives restarts | Caching parsed results (stale on parser change); in-memory only; no cache |
@@ -60,8 +60,8 @@ flowchart LR
 ```
 RealOEM-Searcher/
 ├─ .claude-plugin/
-│  ├─ plugin.json               # plugin manifest; declares MCP server "realoem" and skills paths
-│  └─ marketplace.json          # single-plugin marketplace (source ".")
+│  ├─ plugin.json               # manifest; MCP server "realoem"; skills from the default skills/
+│  └─ marketplace.json          # single-plugin marketplace (source "./")
 ├─ .github/workflows/ci.yml     # ruff + pytest (offline)
 ├─ brands/
 │  ├─ bmw/          brand.toml, README.md, vehicles.csv
@@ -101,9 +101,11 @@ RealOEM-Searcher/
 │  │  │  ├─ vin.py              # ProductionStats, VinDecodeResult             (B)
 │  │  │  ├─ catalog.py          # VehicleSpecs, MainGroup, Subgroup, DiagramThumb, Hotspot,
 │  │  │  │                      #   OptionCode, Condition, PartRow, *Result    (C)
-│  │  │  ├─ fitment.py          # FitmentResult, CompareScope, PartComparison, PartSummary, ComparisonResult (D)
-│  │  ├─ vehicles.py         # IndexedVehicle, IndexMeta, VehicleSearchResult, VehicleIndexUpdateResult (F6)
-│  │  │  └─ supersession.py     # SupersessionHop, SupersessionResult          (E)
+│  │  │  ├─ fitment.py          # PartSearchHit, PartSearch, FitmentResult, CompareScope, PartComparison,
+│  │  │  │                      #   PartSummary, ComparisonResult                (D)
+│  │  │  ├─ supersession.py     # SupersessionHop, SupersessionResult          (E)
+│  │  │  └─ vehicles.py         # IndexedVehicle, IndexMeta, VehicleSearchResult, VehicleIndexUpdateResult,
+│  │  │                         #   VehicleIndexPage                          (F6)
 │  │  ├─ parsers/
 │  │  │  ├─ common.py           # selectolax helpers, dates, prices, canonical, JSON-LD (foundation)
 │  │  │  ├─ part_numbers.py     # (A) normalize/verify
@@ -114,7 +116,7 @@ RealOEM-Searcher/
 │  │  │  ├─ partgrp.py          # (C) main groups + diagram list
 │  │  │  ├─ showparts.py        # (C)
 │  │  │  ├─ partsearch.py       # (D)
-│  │  └─ vehicles.py         # (F6) vehicles index page
+│  │  │  └─ vehicles.py         # (F6) vehicles index page; is_past_end() spots a page past the end
 │  │  └─ tools/                 # auto-discovered; each module defines register(app, services)
 │  │     ├─ admin.py            # server_status, cache_clear                   (foundation)
 │  │     ├─ parts.py            # lookup_part + fetch_part_xref()              (A)
@@ -147,12 +149,14 @@ RealOEM-Searcher/
 ```json
 {
   "name": "realoem-searcher",
+  "displayName": "RealOEM Searcher",
   "version": "0.1.0",
-  "description": "Search and cross-reference BMW, MINI, Rolls-Royce and BMW Motorrad OEM part numbers on RealOEM.com",
+  "description": "Look up BMW, MINI, Rolls-Royce and BMW Motorrad parts on RealOEM.com: part numbers and supersession chains, VIN decoding, parts diagrams, fitment checks, vehicle comparison and a local vehicle finder.",
   "author": { "name": "Cadtastic" },
   "homepage": "https://github.com/Cadtastic/RealOEM-Searcher",
   "repository": "https://github.com/Cadtastic/RealOEM-Searcher",
   "license": "MIT",
+  "keywords": ["bmw", "mini", "rolls-royce", "motorrad", "realoem", "oem-parts", "part-numbers", "vin-decoder", "parts-diagrams", "mcp"],
   "mcpServers": {
     "realoem": {
       "command": "uv",
@@ -171,10 +175,11 @@ RealOEM-Searcher/
 - Tools are exposed to Claude as `mcp__plugin_realoem-searcher_realoem__<tool>`; skills refer to them by
   short name (`lookup_part`).
 - `marketplace.json`: `{"name": "realoem-searcher", "owner": {"name": "Cadtastic"}, "plugins": [{"name":
-  "realoem-searcher", "source": ".", ...}]}`. `Cadtastic/Claude-Plugin-Collection` lists it with
-  `"source": {"source": "github", "repo": "Cadtastic/RealOEM-Searcher"}` (release step, outside the
-  feature branches).
-- Validate locally with `claude plugin validate . --strict` before each PR.
+  "realoem-searcher", "source": "./", ...}]}`. `Cadtastic/Claude-Plugin-Collection` lists it with
+  `"source": {"source": "github", "repo": "Cadtastic/RealOEM-Searcher", "ref": "v<version>"}` (release
+  step, outside the feature branches).
+- Validate locally before each PR with `claude plugin validate . --strict` (the marketplace) and
+  `claude plugin validate .claude-plugin/plugin.json --strict` (the plugin manifest).
 
 ### 5.2 Settings (`config.py`)
 
@@ -209,7 +214,8 @@ def create_services(settings: Settings, *, transport: httpx.AsyncBaseTransport |
                     sleep: Callable[[float], Awaitable[None]] | None = None) -> Services: ...
 ```
 
-Tools and exported fetch helpers receive a `Services` and use only these four attributes.
+Tools and exported fetch helpers receive a `Services` and use only these five attributes; `extras` holds
+branch-owned singletons such as the vehicle index (`tools/vehicles.py`).
 
 ### 5.3 Errors (`errors.py`)
 
@@ -219,7 +225,7 @@ RealOemError(Exception)            # base; .message is user-facing
 ├─ NotFound                        # RealOEM has no such part/vehicle/VIN
 ├─ BotChallenge                    # Cloudflare challenge; includes the URL to open in a browser
 ├─ LayoutChanged(page_type, detail, url)   # parser invariant failed
-└─ UpstreamError(status, url)      # non-200 after retries, timeouts, network errors
+└─ UpstreamError(status, url, detail=None) # non-200 after retries, timeouts, network errors
 ```
 
 Tools catch `RealOemError` and raise `mcp.server.mcpserver.exceptions.ToolError(err.message)`, which
@@ -233,12 +239,12 @@ invalid vehicle id.
 |---|---|---|
 | `SELECT` | `select` (cascade and VIN) | 30 days (VIN hits: 180 days; VIN misses: 1 day; chosen by caller via `ttl`) |
 | `PRODUCTION` | `production` | 180 days (misses shortened to 1 day) |
-| `PARTGRP` | `partgrp` (main groups and `&mg=` diagram lists) | 30 days |
+| `PARTGRP` | `partgrp` (main groups and `&mg=` diagram lists) | 30 days (an unknown main group is shortened to 1 day) |
 | `SHOWPARTS` | `showparts` | 30 days |
 | `PARTXREF` | `partxref` | 7 days |
 | `PARTSEARCH` | `partsearch` | 7 days |
 | `PART` | `part` | 7 days |
-| `VEHICLES` | `vehicles` (vehicles index) | 1 day |
+| `VEHICLES` | `vehicles` (vehicles index) | 1 day (`update_vehicle_index` always fetches with `refresh=True`; a past-the-end probe is expired immediately) |
 
 PageType **values are the path strings** (`"select"`, `"production"`, `"partgrp"`, `"showparts"`,
 `"partxref"`, `"partsearch"`, `"part"`, `"vehicles"`); `cache_clear(page_type=...)` accepts these values.
@@ -372,9 +378,10 @@ and parse only `type_code` and `market`. Input is percent-decoded once (ids copi
 encoded links) and trimmed; `str(vid)` returns that decoded `raw`, which the client encodes when sending.
 `production_month` property returns `"YYYY-MM"` or `None`.
 
-Note for skills: ids taken from `partxref` model rows carry a **nominal** production date (series start),
-and parts lists are filtered by the id's month. For fitment on a specific car, use an id from
-`decode_vin` or `select_vehicle`.
+Note for skills: ids taken from `partxref` model rows carry a nominal date (the vehicle's
+production-start month) in the `_` form, which RealOEM treats as undated (`VB13-USA---…`), so their
+parts lists are not narrowed to a build month; `find_vehicle` ids carry the production-start month.
+For a specific car, use an id from `decode_vin` or `select_vehicle`.
 
 ### 5.9 Parsers
 
@@ -401,8 +408,8 @@ and parts lists are filtered by the id's month. For fitment on a specific car, u
   parser raises `LayoutChanged` for a fetched page, the calling tool/helper runs
   `services.cache.shorten(page.url, timedelta(0))` (expires it immediately) before re-raising. Each
   feature tests this (serve a broken page twice → two requests).
-- Every **data** tool result extends `ResultMeta` (admin tools `server_status` and `cache_clear` are
-  exempt):
+- Every **data** tool result extends `ResultMeta` (admin tools `server_status` and `cache_clear`, and the
+  local-only `find_vehicle`, whose result has no `ResultMeta`, are exempt):
 
 ```python
 class ResultMeta(BaseModel):
@@ -415,7 +422,8 @@ class ResultMeta(BaseModel):
     def from_pages(cls, pages: Sequence[Page], **fields) -> Self: ...   # fills the four fields
 ```
 
-- Common parameter: `refresh: bool = False` on every tool that fetches.
+- Common parameter: `refresh: bool = False` on every tool that fetches, except `update_vehicle_index`
+  (always fetches fresh; no `refresh` parameter). `find_vehicle` makes no requests.
 - Date conventions in results: full dates `date` (ISO `YYYY-MM-DD`); month precision `str` `"YYYY-MM"`;
   prices `float | None` in USD.
 
@@ -450,7 +458,8 @@ consistent across tools:
 ### 5.11 Tool contracts
 
 Parameters are listed in the order they are sent to RealOEM. All data tools also take `refresh: bool =
-False`. Result fields exclude the `ResultMeta` fields.
+False`, except `update_vehicle_index` (always fresh, no `refresh` parameter) and `find_vehicle` (no
+requests). Result fields exclude the `ResultMeta` fields.
 
 **Admin (foundation, `tools/admin.py`)**
 
@@ -622,8 +631,10 @@ class VehicleIndex:
     def add_local(self, rows: Sequence[IndexedVehicle]) -> int: ...   # ignores existing keys
     def meta(self) -> IndexMeta: ...     # built_at, baseline_total, local_rows, last_update_at
     def last_remote_total(self) -> int | None: ...
-    def resume_point(self) -> ResumePoint | None: ...      # stop point of a `partial` update
-    def record_check(self, *, remote_total, resume=None) -> None: ...
+    def resume_point(self) -> tuple[str | None, int] | None: ...
+        # stop point of a `partial` update: (max_prod_start the interrupted scan started from,
+        # next page to read); None when there is none
+    def record_check(self, *, remote_total: int, resume: tuple[str | None, int] | None) -> None: ...
         # sets last_update_at, last_remote_total; stores `resume` (only for `partial`), clears it otherwise
     def close(self) -> None: ...
 ```
@@ -662,8 +673,11 @@ class IndexMeta(BaseModel):
   Literal["up_to_date", "updated", "partial", "drift"], added: list[IndexedVehicle], remote_total: int,
   local_total: int, pages_fetched: int, message: str`. `max_pages` 1–10. Algorithm (always
   `refresh=True`, `sort=year`):
-  1. Fetch page `ceil(local_total / 50)` (≥ 1); read `remote_total`. If equal to `local_total` and every
-     row key on that page is known → `up_to_date` (1 request).
+  0. No baseline to compare with (`built_at` is null or the index is empty) → `drift` with 0 requests and
+     a message telling the maintainer to run `scripts/rebuild_vehicle_index.py`.
+  1. Probe page `ceil(min(local_total, last_remote_total or local_total) / 50)` (≥ 1), never past
+     RealOEM's last known end (`last_remote_total`, recorded by the previous check); read `remote_total`.
+     If equal to `local_total` and every row key on that page is known → `up_to_date` (1 request).
   2. Otherwise fetch from the remote last page backwards while the page's first `prod_start` ≥ the
      index's `max_prod_start` (inclusive) and `pages_fetched < max_pages`; collect unknown keys.
   3. If `len(new) == remote_total − local_total` → add, `updated`. If fewer found and the page limit
@@ -672,10 +686,10 @@ class IndexMeta(BaseModel):
      call resumes from there instead of the new maximum; the stored point is cleared when an update
      completes. Otherwise (back-dated insert, removal, blank row gaining dates) → add what was found,
      `drift`, message recommends the maintainer rebuild. The tool never performs a full crawl (PRD F6.6).
-  4. If the step-1 page is past RealOEM's end (local index larger than RealOEM's, e.g. after removals),
-     fetch page 1 to read `remote_total` and return `drift`. Past the end, RealOEM answers 200 with
-     either no vehicle rows or, as observed live, the last page's rows repeated under an inverted
-     "Showing a–b" range (a > b) (site notes §5.5).
+  4. If the step-1 probe page is past RealOEM's end (`is_past_end`: local index larger than RealOEM's,
+     e.g. after removals), expire it, fetch page 1 to read `remote_total` and return `drift`. Past the
+     end, RealOEM answers 200 with either no vehicle rows or, as observed live, the last page's rows
+     repeated under an inverted "Showing a–b" range (a > b) (site notes §5.5).
 - Note for the skill: index vehicle ids carry the vehicle's **production start** month; parts lists are
   filtered by month, so for a specific car's build month use `select_vehicle` with `prod` or
   `decode_vin`. End dates of vehicles still in production are "as of `built_at`".
@@ -721,6 +735,10 @@ alternating A/B until done or `max_requests` network requests used → part-numb
 
 **Supersession (E):** `trace_supersession` → `fetch_part_xref` per hop, with a visited set and hop cap
 (algorithm in the E plan; site notes §3.5).
+
+**Vehicle index (F6):** `find_vehicle` → local SQLite search over the index (no request).
+`update_vehicle_index` → probe page (`fetch(VEHICLES, "vehicles", {page, sort=year}, refresh=True)`) →
+scan back from the last page within `max_pages` → `add_local` + `record_check`.
 
 ## 7. Cross-cutting concerns
 

@@ -6,15 +6,15 @@ description: Browse RealOEM parts diagrams for a BMW, MINI, Rolls-Royce or BMW M
 # Diagram browsing
 
 Walks RealOEM's catalog the way its website does: vehicle -> main groups -> diagrams -> parts
-list with the exploded-view image. Every step is one request and is cached for 30 days.
+list with the exploded-view image. Each catalog step is one request and is cached for 30 days.
 
 ## 1. Get a vehicle id
 
 - The user has a VIN: call `decode_vin` and use its `vehicle.vehicle_id`. It carries the car's
   own production month.
-- If the `find_vehicle` tool is available, try it first to get a vehicle id without walking the
-  cascade; its ids carry the vehicle's production-start month, so for a specific build month
-  still use `select_vehicle` with `prod` (or `decode_vin`).
+- Without a VIN, try `find_vehicle` first to get a vehicle id without walking the cascade; its
+  ids carry the vehicle's production-start month, so for a specific build month still use
+  `select_vehicle` with `prod` (or `decode_vin`).
 - Otherwise walk the cascade with `select_vehicle`, one level per call:
   1. Call it with `product` only (`P` cars, including MINI and Rolls-Royce; `M` motorcycles).
   2. Show the user `options` for `next_level` (their `label`s) and let them choose.
@@ -27,11 +27,10 @@ list with the exploded-view image. Every step is one request and is cached for 3
   5. Repeat until `complete` is true; then use `vehicle.vehicle_id`.
   If a value you sent is missing from `selected`, RealOEM did not accept it: offer `options`
   again.
-- Ids from `lookup_part` rows carry a nominal production date: their date is only nominal;
-  RealOEM treats the `_` form as undated (`VB13-USA---…`), so the list is not narrowed to a build
-  month (undated ids are not date-filtered to a build month). Every other id's parts lists are
-  filtered by its production month, so for a specific car prefer an id from `decode_vin` or
-  `select_vehicle`.
+- Ids from `lookup_part` rows carry a nominal production date, and RealOEM treats their `_` form
+  as undated (`VB13-USA---…`), so they are not date-filtered to a build month. Every other id's
+  parts lists are filtered by its production month, so for a specific car prefer an id from
+  `decode_vin` or `select_vehicle`.
 
 ## 2. Main groups
 

@@ -14,7 +14,7 @@ go through the MCP tools, which rate-limit, cache and parse RealOEM for you.
 - "Is 11427541827 still current?", "What replaced 12120034087?", "What's the latest number for
   11 42 7 566 327?", "Show the supersession history of 11427953129."
 - After `lookup_part` shows `superseded_by` entries and the user wants the replacement confirmed.
-- Not for fitment on a specific car; use the fitment tools for that when they are available.
+- Not for fitment on a specific car; use `check_fitment` for that.
 
 ## Steps
 

@@ -2,8 +2,10 @@
 
 Reconnaissance of https://www.realoem.com performed 2026-09-29/30 (~110 polite requests, ≥2 s apart).
 These notes are the source of truth for parser and client behavior. Raw captured pages live in the
-git-ignored `.research-raw/{xref,vin,diagrams}/` folder of a local checkout; trimmed fixtures derived
-from them live in `server/tests/fixtures/`.
+git-ignored `.research-raw/` folder of a local checkout: the original research used
+`.research-raw/{xref,vin,diagrams}/` (later also `diagrams2/`, `partsearch2/`, `vehicles/`), and captures
+made with `server/scripts/capture_page.py` go to `.research-raw/<page type>/` (e.g. `partxref/`). Trimmed
+fixtures derived from them live in `server/tests/fixtures/`.
 
 Catalog snapshot at time of research: "Catalog: 03/2025" (`span.catalog-version`).
 
@@ -92,6 +94,10 @@ model become `_` and commas are kept.
 - Server keys on the leading `TypeCode-Market-MM-YYYY`; a garbage suffix is accepted and the page's
   `<link rel="canonical">` gives the normalized id. `partgrp?id=VB13` alone → 301 to `/bmw/`.
 - Production month in the id matters: parts lists are filtered by it.
+- `showparts` with the xref form `VB13-USA-02_2004_E90_BMW_325i` canonicalizes to the **undated** id
+  `VB13-USA---E90-BMW-325i` (`<link rel="canonical">`; fixture `showparts/e90_325i_xref_id_11_3867.html`),
+  so the nominal date in xref-form ids (the vehicle's production-start month, e.g. `02_2004` for the
+  VB13 325i USA) does not narrow the parts list to a build month.
 - Classic catalog (`archive=1`) is not visible in the id.
 - **Always take ids from the site (hidden input / hrefs / canonical); URL-encode when sending** (spaces,
   commas, parentheses). The site's own hrefs are not encoded.
@@ -147,7 +153,9 @@ model become `_` and commas are kept.
 - Weight can be nonsense (spark plug 44.650 kg); pass through as-is.
 - **Description of a current part on partxref** exists only in affiliate markup
   `a.ecs-tuning-button[data-ecs-part-name]`. Fallbacks: text of a supersession link naming this part →
-  `partsearch` `h2` → `part?id=` `h1`.
+  `partsearch` `h2` → `part?id=` `h1`. The plugin uses only the supersession-link fallback (plus the `h1`
+  and ECS attribute); `partsearch` and `part` would each cost an extra request, so `lookup_part` returns
+  `description: null` instead.
 
 ### 3.5 Supersession blocks (xref, part, partsearch)
 
@@ -292,9 +300,10 @@ Per-VIN SA/option codes, paint, upholstery, model year, transmission (modern car
 | Motorrad | Z656595 | product M, "K50 (R 1200 GS, R 1250 GS)", "R 1200 GS 17 (0A51, 0A61)", USA 09/2017, 0A61; no body (`body=ohne` hidden) / engine level |
 | Classic E30 | 1234567 | adds Steering + Transmission levels |
 
-WMI prefixes for sanity checks (first 3 chars of a 17-char VIN): BMW cars `WBA`, `WBS` (M), `WBY` (i),
-US-built `5UX`, `5YM`, `4US`; MINI `WMW`, `WMZ`; Rolls-Royce `SCA`; Motorrad `WB1`, `WB3` (verify list
-during implementation).
+WMI prefixes for sanity checks (first 3 chars of a 17-char VIN), as shipped in `brands/*/brand.toml`: BMW
+cars `WBA`, `WBS` (M), `WBY` (i), `WBX`, US-built `5UX`, `5UM`, `5YM`, `4US`, and `3MW`, `LBV`; MINI `WMW`,
+`WMZ`; Rolls-Royce `SCA`; Motorrad `WB1`, `WB3`. The lists are best-effort: an unknown prefix only adds a
+warning to the `decode_vin` result.
 
 ---
 
