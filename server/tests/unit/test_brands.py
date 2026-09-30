@@ -2,6 +2,7 @@ from pathlib import Path
 
 import pytest
 
+from realoem_mcp import vehicle_ids
 from realoem_mcp.brands import Brand, BrandRegistry
 from realoem_mcp.vehicle_ids import VehicleId
 from tests.harness import BRANDS_DIR
@@ -116,12 +117,13 @@ def test_for_wmi(registry: BrandRegistry) -> None:
 
 
 def test_unknown_keys_go_to_extra(tmp_path: Path) -> None:
-    (tmp_path / "zinoro").mkdir()
-    (tmp_path / "zinoro" / "brand.toml").write_text(
+    path = tmp_path / "zinoro" / "brand.toml"
+    path.parent.mkdir()
+    path.write_text(
         'id = "zinoro"\ndisplay_name = "Zinoro"\nproduct = "P"\nlogo = "z.png"\n',
         encoding="utf-8",
     )
-    (brand,) = BrandRegistry.load(tmp_path)
+    brand = Brand.from_toml(path)
     assert brand.extra == {"logo": "z.png"}
     assert (brand.series_patterns, brand.dedupe_repeated_names, brand.priority) == ((), False, 100)
 
@@ -144,3 +146,65 @@ def test_invalid_brand_files(tmp_path: Path, content: str, message: str) -> None
 def test_empty_directory_is_an_error(tmp_path: Path) -> None:
     with pytest.raises(FileNotFoundError):
         BrandRegistry.load(tmp_path)
+
+
+_BASE = 'id = "x"\ndisplay_name = "X"\nproduct = "P"\n'
+
+
+def _write_brand(tmp_path: Path, extra: str) -> Path:
+    path = tmp_path / "x" / "brand.toml"
+    path.parent.mkdir(exist_ok=True)
+    path.write_text(_BASE + extra, encoding="utf-8")
+    return path
+
+
+@pytest.mark.parametrize(
+    ("line", "key"),
+    [
+        ('id_brand_segments = "BMW"', "id_brand_segments"),
+        ("series_patterns = [1, 2]", "series_patterns"),
+        ('label_keywords = ["ok", 3]', "label_keywords"),
+        ('wmi = { a = "b" }', "wmi"),
+        ('dedupe_repeated_names = "yes"', "dedupe_repeated_names"),
+        ("dedupe_repeated_names = 1", "dedupe_repeated_names"),
+        ('priority = "10"', "priority"),
+        ("priority = 1.5", "priority"),
+        ("priority = true", "priority"),
+    ],
+)
+def test_wrong_value_types_name_the_file_and_key(tmp_path: Path, line: str, key: str) -> None:
+    path = _write_brand(tmp_path, line + "\n")
+    with pytest.raises(ValueError, match=key) as info:
+        Brand.from_toml(path)
+    assert str(path) in str(info.value)
+
+
+def test_invalid_series_pattern_names_file_and_pattern(tmp_path: Path) -> None:
+    path = _write_brand(tmp_path, 'series_patterns = ["^ok$", "([unclosed"]\n')
+    with pytest.raises(ValueError, match=r"series_patterns.*\(\[unclosed") as info:
+        Brand.from_toml(path)
+    assert str(path) in str(info.value)
+
+
+def test_extra_is_read_only_but_still_a_mapping(tmp_path: Path) -> None:
+    path = _write_brand(tmp_path, 'logo = "x.png"\n')
+    brand = Brand.from_toml(path)
+    assert brand.extra.get("logo") == "x.png"
+    assert brand.extra.get("missing") is None
+    with pytest.raises(TypeError):
+        brand.extra["logo"] = "y.png"  # type: ignore[index]
+    assert hash(brand) == hash(Brand.from_toml(path))
+    assert brand == Brand.from_toml(path)
+
+
+def test_load_requires_the_fallback_brands(tmp_path: Path) -> None:
+    for brand_id in ("bmw", "mini"):
+        path = tmp_path / brand_id / "brand.toml"
+        path.parent.mkdir()
+        path.write_text(f'id = "{brand_id}"\ndisplay_name = "X"\nproduct = "P"\n')
+    with pytest.raises(ValueError, match="motorrad"):
+        BrandRegistry.load(tmp_path)
+
+
+def test_default_brand_segments_match_the_shipped_brands(registry: BrandRegistry) -> None:
+    assert set(vehicle_ids.DEFAULT_BRAND_SEGMENTS) == set(registry.brand_segments())

@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import re
 import tomllib
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any
 
 from realoem_mcp.vehicle_ids import VehicleId
@@ -14,6 +15,7 @@ from realoem_mcp.vehicle_ids import VehicleId
 _LIST_KEYS = ("id_brand_segments", "series_patterns", "label_keywords", "wmi")
 _KNOWN_KEYS = {"id", "display_name", "product", "notes", "dedupe_repeated_names", "priority"}
 _KNOWN_KEYS.update(_LIST_KEYS)
+_REQUIRED_BRAND_IDS = ("bmw", "motorrad")  # the fallbacks BrandRegistry relies on
 
 
 @dataclass(frozen=True)
@@ -28,7 +30,10 @@ class Brand:
     notes: str = ""
     dedupe_repeated_names: bool = False
     priority: int = 100
-    extra: dict[str, Any] = field(default_factory=dict, hash=False, compare=False)
+    extra: Mapping[str, Any] = field(default_factory=dict, hash=False, compare=False)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "extra", MappingProxyType(dict(self.extra)))
 
     @classmethod
     def from_toml(cls, path: Path) -> Brand:
@@ -40,6 +45,7 @@ class Brand:
             raise ValueError(f"{path}: product must be 'P' or 'M', got {data['product']!r}")
         if data["id"] != path.parent.name:
             raise ValueError(f"{path}: id {data['id']!r} must match its directory name")
+        _check_types(path, data)
         return cls(
             id=data["id"],
             display_name=data["display_name"],
@@ -49,8 +55,8 @@ class Brand:
             label_keywords=tuple(data.get("label_keywords", ())),
             wmi=tuple(data.get("wmi", ())),
             notes=data.get("notes", ""),
-            dedupe_repeated_names=bool(data.get("dedupe_repeated_names", False)),
-            priority=int(data.get("priority", 100)),
+            dedupe_repeated_names=data.get("dedupe_repeated_names", False),
+            priority=data.get("priority", 100),
             extra={k: v for k, v in data.items() if k not in _KNOWN_KEYS},
         )
 
@@ -59,6 +65,26 @@ class Brand:
 
     def matches_series(self, code: str) -> bool:
         return any(re.search(pattern, code) for pattern in self.series_patterns)
+
+
+def _check_types(path: Path, data: dict[str, Any]) -> None:
+    for key in _LIST_KEYS:
+        value = data.get(key, [])
+        if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+            raise ValueError(f"{path}: {key} must be a list of strings, got {value!r}")
+    flag = data.get("dedupe_repeated_names", False)
+    if not isinstance(flag, bool):
+        raise ValueError(f"{path}: dedupe_repeated_names must be true or false, got {flag!r}")
+    priority = data.get("priority", 100)
+    if isinstance(priority, bool) or not isinstance(priority, int):
+        raise ValueError(f"{path}: priority must be an integer, got {priority!r}")
+    for pattern in data.get("series_patterns", []):
+        try:
+            re.compile(pattern)
+        except re.error as error:
+            raise ValueError(
+                f"{path}: invalid series_patterns entry {pattern!r}: {error}"
+            ) from None
 
 
 class BrandRegistry:
@@ -71,7 +97,15 @@ class BrandRegistry:
         files = sorted(Path(directory).glob("*/brand.toml"))
         if not files:
             raise FileNotFoundError(f"No brands/*/brand.toml files found under {directory}")
-        return cls(Brand.from_toml(path) for path in files)
+        brands = [Brand.from_toml(path) for path in files]
+        present = {brand.id for brand in brands}
+        missing = [brand_id for brand_id in _REQUIRED_BRAND_IDS if brand_id not in present]
+        if missing:
+            raise ValueError(
+                f"{directory}: required brand(s) missing: {', '.join(missing)} "
+                "(the registry falls back to them)"
+            )
+        return cls(brands)
 
     def __iter__(self) -> Iterator[Brand]:
         return iter(self._brands)
