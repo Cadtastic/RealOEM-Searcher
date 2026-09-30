@@ -70,6 +70,8 @@ async def trace_chain(
             warnings=[],
         )
     chain = [_hop(xref, None)]
+    visited = {xref.part_number}
+    alternatives: list[SupersessionEntry] = []
     warnings: list[str] = []
     current: str | None = None
     while True:
@@ -80,7 +82,15 @@ async def trace_chain(
                 status = "current" if len(chain) == 1 else "replaced"
                 current = xref.part_number
             break
+        open_ended = [e for e in xref.superseded_by if e.valid_to is None]
         pick = choose_successor(xref.superseded_by)
+        if pick.part_number in visited:  # RealOEM's links loop back into the chain
+            status, alternatives = "ambiguous", open_ended or [pick]
+            warnings.append(
+                f"loop detected: {xref.part_number} is superseded by {pick.part_number}, "
+                "which is already in the chain"
+            )
+            break
         successor = None
         if len(chain) > max_hops:
             warnings.append(
@@ -95,10 +105,18 @@ async def trace_chain(
                     f"successor page missing: RealOEM has no page for {pick.part_number}"
                 )
         if successor is None:  # stopped early: hop limit or missing page
-            status = "replaced"
-            current = pick.part_number if pick.valid_to is None else None
+            if len(open_ended) > 1:
+                status, alternatives = "ambiguous", open_ended
+            else:
+                status = "replaced"
+                current = pick.part_number if pick.valid_to is None else None
+            break
+        others = {e.part_number for e in open_ended} - {pick.part_number}
+        if not others <= {e.part_number for e in successor.supersedes}:
+            status, alternatives = "ambiguous", open_ended  # distinct open-ended successors
             break
         chain.append(_hop(successor, pick.remark))
+        visited.add(successor.part_number)
         xref = successor
     return SupersessionResult.from_pages(
         pages,
@@ -106,7 +124,7 @@ async def trace_chain(
         status=status,
         current_part_number=current,
         chain=chain,
-        alternatives=[],
+        alternatives=alternatives,
         history=xref.supersedes,
         complete=not warnings,
         warnings=warnings,

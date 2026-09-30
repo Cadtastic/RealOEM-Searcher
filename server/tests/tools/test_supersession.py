@@ -343,3 +343,61 @@ async def test_successor_ended_without_successor(
     assert _numbers(data["history"]) == OIL_FILTER_HISTORY
     assert (data["complete"], data["warnings"]) == (True, [])
     assert [str(r.url) for r in transport.requests] == [SUPERSEDED, OIL_FILTER]
+
+
+# --- Ambiguity and loops ----------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("successor_page", "warnings"),
+    [
+        (REAL[OIL_FILTER], []),
+        (
+            "partxref/not_found_11426666661.html",
+            ["successor page missing: RealOEM has no page for 11427953129"],
+        ),
+    ],
+    ids=["successor-does-not-list-it", "successor-has-no-page"],
+)
+async def test_distinct_open_ended_successors_are_ambiguous(
+    make_services: MakeServices, tmp_path: Path, successor_page: str, warnings: list[str]
+) -> None:
+    # synthetic: 11428683196 renamed to 11427000001 (unknown to 11427953129) and left open-ended
+    page = _synthetic(
+        tmp_path,
+        "partxref/superseded_11427541827.html",
+        ("11428683196", "11427000001"),
+        (END_683196, "(09/01/2016 — )"),
+    )
+    services, transport = make_services({SUPERSEDED: page, OIL_FILTER: successor_page})
+    data = (await _trace(services, part_number="11427541827")).structured_content
+    assert (data["status"], data["current_part_number"]) == ("ambiguous", None)
+    assert _numbers(data["alternatives"]) == ["11427000001", "11427953129"]
+    assert [a["valid_to"] for a in data["alternatives"]] == [None, None]
+    assert [hop["part_number"] for hop in data["chain"]] == ["11427541827"]
+    assert data["history"] == []
+    # the latest successor's page was read to check whether it replaces the other one
+    assert data["source_urls"] == [SUPERSEDED, OIL_FILTER]
+    assert (data["complete"], data["warnings"]) == (not warnings, warnings)
+    assert len(transport.requests) == 2
+
+
+async def test_links_looping_back_stop_the_trace(
+    make_services: MakeServices, tmp_path: Path
+) -> None:
+    # synthetic: 11427953129 "superseded by" 11427541827, which points back to 11427953129
+    page = _synthetic(
+        tmp_path,
+        "partxref/oil_filter_11427953129.html",
+        (SUPERSEDES_BLOCK, _superseded_by("11427541827", "Set oil-filter element", END_953129)),
+    )
+    services, transport = make_services({OIL_FILTER: page, SUPERSEDED: REAL[SUPERSEDED]})
+    data = (await _trace(services, part_number="11427953129")).structured_content
+    assert (data["status"], data["current_part_number"]) == ("ambiguous", None)
+    assert [hop["part_number"] for hop in data["chain"]] == ["11427953129", "11427541827"]
+    assert _numbers(data["alternatives"]) == ["11427953129"]
+    assert data["complete"] is False
+    assert data["warnings"] == [
+        "loop detected: 11427541827 is superseded by 11427953129, which is already in the chain"
+    ]
+    assert [str(r.url) for r in transport.requests] == [OIL_FILTER, SUPERSEDED]
