@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: ${{ matrix.os }} / Python ${{ matrix.python }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            python: "3.11"
+          - os: ubuntu-latest
+            python: "3.13"
+          - os: windows-latest
+            python: "3.13"
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: ${{ matrix.python }}
+          enable-cache: true
+          cache-dependency-glob: server/uv.lock
+      - name: Install dependencies
+        run: uv sync --locked
+      - name: Lint
+        run: uv run ruff check
+      - name: Check formatting
+        run: uv run ruff format --check
+      - name: Test (offline)
+        run: uv run pytest -m "not live"
