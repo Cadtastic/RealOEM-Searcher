@@ -38,7 +38,7 @@
   `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>` (the second `-m` in each commit command
   produces exactly that).
 - Versions stay `0.1.0` everywhere; feature branches never bump them.
-- Expected test counts below are for this branch on top of the foundation (194 tests). If other
+- Expected test counts below are for this branch on top of the foundation (197 tests). If other
   feature branches merged into `main` first, full-suite totals are higher; per-file counts are
   unchanged.
 - The foundation's `tests/unit/test_fixtures.py` checks every fixture under
@@ -142,7 +142,7 @@ Expected: `Switched to a new branch 'feat/vin-decode'`.
 - [ ] **Step 2: Confirm the foundation is in place and green**
 
 Run: `uv run --directory server pytest -q`
-Expected: PASS (`194 passed, 1 deselected` when main has only the foundation; more if other feature
+Expected: PASS (`197 passed, 1 deselected` when main has only the foundation; more if other feature
 branches merged first)
 
 ### Task 1: Select-cascade models (`models/select.py`)
@@ -2865,7 +2865,7 @@ uv run --directory server ruff check
 uv run --directory server ruff format --check
 ```
 
-Expected: `334 passed, 2 deselected`, `All checks passed!`, `62 files already formatted` (higher
+Expected: `337 passed, 2 deselected`, `All checks passed!`, `62 files already formatted` (higher
 counts if other feature branches are already on main).
 
 - [ ] **Step 2: No full VIN in any committed fixture, nothing raw or generated staged**
