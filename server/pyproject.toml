@@ -1,0 +1,42 @@
+[project]
+name = "realoem-mcp"
+version = "0.1.0"
+description = "MCP server for looking up BMW Group OEM parts on RealOEM.com"
+requires-python = ">=3.11"
+license = "MIT"
+dependencies = [
+    "httpx>=0.28,<1",
+    "mcp>=2.2,<3",
+    "platformdirs>=4",
+    "pydantic>=2.11,<3",
+    "selectolax>=0.4,<0.5",
+]
+
+[project.scripts]
+realoem-mcp = "realoem_mcp.server:main"
+
+[dependency-groups]
+dev = [
+    "anyio>=4",
+    "pytest>=8",
+    "ruff>=0.14",
+]
+
+[build-system]
+requires = ["uv_build>=0.11.13,<0.12.0"]
+build-backend = "uv_build"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "B", "UP", "SIM", "RUF"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = ["-m", "not live", "--import-mode=importlib"]
+markers = [
+    "live: sends real requests to www.realoem.com; opt-in with REALOEM_LIVE=1 and -m live",
+]
