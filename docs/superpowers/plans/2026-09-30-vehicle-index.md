@@ -12,6 +12,12 @@
 
 ## Before you start
 
+> **Note (2026-09-30, after the live crawl):** `has_vehicle_rows` below shipped as `is_past_end`
+> (`parsers/vehicles.py`). RealOEM does not serve an empty page past its end: page 166 of 165 answered
+> 200 with page 165's 18 rows under "Showing 8251–8218 of 8218", which `has_vehicle_rows` would have
+> accepted. `is_past_end` also treats an inverted range (first > last) as past the end (ARD §5.11 F6
+> step 4, site notes §5.5). The plan text is left as written.
+
 - `main` already contains the foundation and, very likely, the part-lookup, VIN-decode and
   diagram-browse branches. This plan uses **only foundation APIs**: `Settings` (incl. `data_dir`,
   `brands_dir`), `Services` / `Services.extras` / `create_services`, `RealOemClient.fetch(page_type,

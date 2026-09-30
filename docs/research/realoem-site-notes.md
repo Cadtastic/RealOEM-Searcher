@@ -407,6 +407,13 @@ Researched 2026-09-30 (15 requests, honest UA; raw pages in `.research-raw/vehic
 - Total count: second `<strong>` in `#vi-result-bar > span:first-child` ("Showing 8201–8218 of 8218
   vehicles"). Last page link `#vi-pagination a[title="Last page"]`; absent on the last page
   (`span.vi-pg-current`); no `#vi-pagination` when one page suffices.
+- **Past the end** (captured live 2026-09-30 by the maintainer's baseline crawl; raw:
+  `.research-raw/vehicles/sort_year_past_end.html`, fixture
+  `server/tests/fixtures/vehicles/sort_year_past_end.html`): `vehicles?page=166&sort=year` (165 pages,
+  8218 vehicles) answers **HTTP 200**, no error, and re-serves page 165's 18 rows under an inverted
+  result bar, "Showing 8251–8218 of 8218" (first = (page − 1) × 50 + 1, last = total). The pagination
+  has no "Last page" link and no `span.vi-pg-current` (only 1 … 164, 165). Detect: first > last in
+  "Showing a–b", or no rows (`is_past_end`).
 - **`sort=year` = ascending production start**, the 51 blank-start rows first (page 1 + first row of
   page 2), latest start (03/2025) on page 165. Ties: model name, then market, then type (best guess).
   **No descending option** (`dir=desc`, `order=desc`, `sort=-year` ignored).
