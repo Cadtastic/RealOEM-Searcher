@@ -2523,6 +2523,7 @@ def test_empty_date_form() -> None:
         ("MF73-USA-02-2008-R56-Mini-Cooper_S", "R56", "Mini", "Cooper_S"),
         ("FK43-USA-06-2010-RR4-Rolls_Royce-Ghost", "RR4", "Rolls_Royce", "Ghost"),
         ("FK41-EUR-06_2010_RR4_Rolls_Royce_Ghost", "RR4", "Rolls_Royce", "Ghost"),
+        ("XXXX-CHN-01-2016-M13-Zinoro-60H", "M13", "Zinoro", "60H"),
         (
             "0J93-USA-05-2019-K50-BMW-R_1250_GS_19_0J91,_0J93_",
             "K50",
@@ -2545,14 +2546,14 @@ def test_percent_decoded_once_and_trimmed() -> None:
 
 
 def test_unknown_brand_segment_keeps_series_and_date() -> None:
-    vid = VehicleId.parse("AB12-USA-01-2020-G20-Zinoro-X")
+    vid = VehicleId.parse("AB12-USA-01-2020-G20-Isetta-X")
     assert (vid.series, vid.brand_segment, vid.model, vid.production_month) == (
         "G20",
         None,
         None,
         "2020-01",
     )
-    assert VehicleId.parse("AB12-USA-01-2020-G20-Zinoro-X", brand_segments=["Zinoro"]).model == (
+    assert VehicleId.parse("AB12-USA-01-2020-G20-Isetta-X", brand_segments=["Isetta"]).model == (
         "X"
     )
 
@@ -2569,7 +2570,7 @@ def test_empty_id_is_invalid_input() -> None:
 
 
 def test_default_brand_segments() -> None:
-    assert DEFAULT_BRAND_SEGMENTS == ("Rolls_Royce", "Mini", "BMW")
+    assert DEFAULT_BRAND_SEGMENTS == ("Rolls_Royce", "Zinoro", "Mini", "BMW")
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -2593,7 +2594,7 @@ from urllib.parse import unquote
 
 from realoem_mcp.errors import InvalidInput
 
-DEFAULT_BRAND_SEGMENTS: tuple[str, ...] = ("Rolls_Royce", "Mini", "BMW")
+DEFAULT_BRAND_SEGMENTS: tuple[str, ...] = ("Rolls_Royce", "Zinoro", "Mini", "BMW")
 
 _HEAD = r"(?P<type>[^-]+)-(?P<market>[^-]+)-"
 # (pattern, separator between series, brand segment and model)
@@ -2760,7 +2761,7 @@ def test_brands_are_hashable(registry: BrandRegistry) -> None:
 
 
 def test_brand_segments(registry: BrandRegistry) -> None:
-    assert set(registry.brand_segments()) == {"Mini", "Rolls_Royce", "BMW"}
+    assert set(registry.brand_segments()) == {"Mini", "Rolls_Royce", "BMW", "Zinoro"}
 
 
 @pytest.mark.parametrize(
@@ -2794,6 +2795,7 @@ def test_for_series(
         ("MF73-USA-02-2008-R56-Mini-Cooper_S", None, "mini"),
         ("FK43-USA-06-2010-RR4-Rolls_Royce-Ghost", None, "rolls-royce"),
         ("VB13-USA-10-2005-E90-BMW-325i", None, "bmw"),
+        ("XXXX-CHN-01-2016-M13-Zinoro-60H", None, "bmw"),
         ("0J93-USA-05-2019-K50-BMW-R_1250_GS_19_0J91,_0J93_", None, "motorrad"),
         ("0J93-USA-05-2019-K50-BMW-R_1250_GS_19_0J91,_0J93_", "M", "motorrad"),
         ("VB13-USA-10-2005-E90-BMW-325i", "P", "bmw"),
@@ -2905,7 +2907,7 @@ Create `brands/bmw/brand.toml`:
 id = "bmw"
 display_name = "BMW"
 product = "P"                         # P = cars, M = motorcycles
-id_brand_segments = ["BMW"]           # vehicle-id brand segment(s)
+id_brand_segments = ["BMW", "Zinoro"] # vehicle-id brand segment(s); Zinoro = BMW Brilliance
 series_patterns = []                  # fallback brand for cars: matches nothing explicitly
 label_keywords = []
 wmi = ["WBA", "WBS", "WBY", "WBX", "5UX", "5UM", "5YM", "4US", "3MW", "LBV"]
@@ -2923,7 +2925,8 @@ Brand notes for skills and parsers. Registry data lives in `brand.toml`.
 
 - Fallback brand for product `P` (cars): any series not claimed by MINI or Rolls-Royce is BMW,
   including BMW i, M/Motorsport (`MOSP`) and Zinoro.
-- Vehicle ids use the brand segment `BMW`, e.g. `VB13-USA-10-2005-E90-BMW-325i`.
+- Vehicle ids use the brand segment `BMW`, e.g. `VB13-USA-10-2005-E90-BMW-325i`; Zinoro
+  (BMW Brilliance, China) ids use `Zinoro`.
 - Series codes are opaque; LCI (facelift) series end in `N` (`E90N`). Read codes from links, never
   from labels.
 - Classic catalog (`archive=1`) holds E21, E30, E36, E46, E39, E38, E31, Z3 and others; Classic cars

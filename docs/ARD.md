@@ -339,7 +339,7 @@ priority = 10                         # lower = checked first when matching seri
   | `mini` | P | `Mini` | `^R5\d$`, `^R6\d$`, `^F5[4-7]$`, `^F60$`, `^J0\d$`, `^U25$` | `MINI` | `WMW`, `WMZ` | 10 |
   | `rolls-royce` | P | `Rolls_Royce` | `^RR\d+N?$`, `^R[12]\dN$` | `Rolls-Royce`, `Phantom`, `Ghost`, `Wraith`, `Dawn`, `Cullinan`, `Spectre` | `SCA` | 20 |
   | `motorrad` | M | `BMW` | `^K`, `^R\d`, `^T\d` | — | `WB1`, `WB3` | 30 |
-  | `bmw` | P | `BMW` | — (fallback) | — | `WBA`, `WBS`, `WBY`, `WBX`, `5UX`, `5UM`, `5YM`, `4US`, `3MW`, `LBV` | 100 |
+  | `bmw` | P | `BMW`, `Zinoro` | — (fallback) | — | `WBA`, `WBS`, `WBY`, `WBX`, `5UX`, `5UM`, `5YM`, `4US`, `3MW`, `LBV` | 100 |
 
   `motorrad` sets `dedupe_repeated_names = true`. WMI lists are best-effort (verified in the B plan).
 - `BrandRegistry.load(dir)` reads all `brand.toml` files; `brand_segments()` returns every
@@ -364,7 +364,7 @@ priority = 10                         # lower = checked first when matching seri
 month, year, series, brand_segment, model)` handles the `-` form (`VB13-USA-10-2005-E90-BMW-325i`), the
 xref `_` form (`VB13-USA-02_2004_E90_BMW_325i`) and the empty-date form (`VB13-USA---E90-BMW-325i`).
 Brand segments can contain the separator (`Rolls_Royce`), so after the series token the parser matches
-the **longest known brand segment** (`DEFAULT_BRAND_SEGMENTS = ("Rolls_Royce", "Mini", "BMW")`; callers
+the **longest known brand segment** (`DEFAULT_BRAND_SEGMENTS = ("Rolls_Royce", "Zinoro", "Mini", "BMW")`; callers
 with a registry pass `registry.brand_segments()`); the remainder is the model. Unknown shapes keep `raw`
 and parse only `type_code` and `market`. Input is percent-decoded once (ids copied from
 encoded links) and trimmed; `str(vid)` returns that decoded `raw`, which the client encodes when sending.
@@ -648,7 +648,8 @@ class IndexedVehicle(BaseModel):
     source: Literal["baseline", "local"]
 
 class IndexMeta(BaseModel):
-    built_at: date; baseline_total: int; local_rows: int; last_update_at: datetime | None
+    built_at: date | None            # None until a baseline is installed
+    baseline_total: int; local_rows: int; last_update_at: datetime | None
 ```
 
 - `update_vehicle_index(max_pages: int = 5)` → `VehicleIndexUpdateResult(ResultMeta)`: `status:
@@ -660,9 +661,13 @@ class IndexMeta(BaseModel):
   2. Otherwise fetch from the remote last page backwards while the page's first `prod_start` ≥ the
      index's `max_prod_start` (inclusive) and `pages_fetched < max_pages`; collect unknown keys.
   3. If `len(new) == remote_total − local_total` → add, `updated`. If fewer found and the page limit
-     stopped the scan → add what was found, `partial`. Otherwise (back-dated insert, removal, blank row
-     gaining dates) → add what was found, `drift`, message recommends the maintainer rebuild. The tool
-     never performs a full crawl (PRD F6.6).
+     stopped the scan → add what was found, `partial`, and store the scan's stop point (the
+     `max_prod_start` the scan started from, and the next page to read) in the store's `meta`, so the next
+     call resumes from there instead of the new maximum; the stored point is cleared when an update
+     completes. Otherwise (back-dated insert, removal, blank row gaining dates) → add what was found,
+     `drift`, message recommends the maintainer rebuild. The tool never performs a full crawl (PRD F6.6).
+  4. If the step-1 page has no vehicles table (local index larger than RealOEM's, e.g. after removals),
+     fetch page 1 to read `remote_total` and return `drift`.
 - Note for the skill: index vehicle ids carry the vehicle's **production start** month; parts lists are
   filtered by month, so for a specific car's build month use `select_vehicle` with `prod` or
   `decode_vin`. End dates of vehicles still in production are "as of `built_at`".
@@ -674,8 +679,12 @@ class IndexMeta(BaseModel):
 (`tools/supersession.py`, `models/supersession.py`): `query, status: Literal["current", "replaced",
 "no_successor", "ambiguous", "not_found"], current_part_number: str | None, chain:
 list[SupersessionHop(part_number: str, description: str | None, valid_from: date | None, valid_to: date
-| None, remark: str | None)], alternatives: list[SupersessionEntry], history: list[SupersessionEntry]`.
-Uses `fetch_part_xref` per hop. `max_hops` valid range 1–10, otherwise `InvalidInput`.
+| None, remark: str | None)], alternatives: list[SupersessionEntry], history: list[SupersessionEntry],
+complete: bool, warnings: list[str]`. Uses `fetch_part_xref` per hop. `max_hops` (successor pages
+read; a trace makes at most `1 + max_hops` requests) valid range 1–10, otherwise `InvalidInput`.
+`complete=False` with a warning when the trace stopped early: hop limit reached, a successor's page is
+missing, or a loop was detected (a loop is reported as `status="ambiguous"` plus a "loop detected"
+warning); `current_part_number` is then the newest successor RealOEM names (or `None`).
 
 ### 5.12 Skills
 
@@ -768,7 +777,8 @@ alternating A/B until done or `max_requests` network requests used → part-numb
     LANDING_URL)` alone reproduces the invalid-id case).
 
   Each test module declares its own routes inline; fixture files are named
-  `fixtures/<page-type>/<slug>.html`, so parallel branches only add files.
+  `fixtures/<page-type>/<slug>.html` (or `fixtures/<feature>/<slug>.html` when a later branch adds
+  captures of a page type another branch owns), so parallel branches only add files.
 - Fixture pipeline: `capture_page.py` (raw, into `.research-raw/`) → `trim_fixture.py` → commit trimmed
   file. Trimming removes `<script>` except `application/ld+json` and scripts containing `partsimgmap`,
   removes `<style>`, `<link>` (except canonical), `<iframe>`, `<ins>`, comments and ad containers
@@ -788,7 +798,7 @@ alternating A/B until done or `max_requests` network requests used → part-numb
 | 2 | `feat/part-lookup` | [part lookup](superpowers/plans/2026-09-30-part-lookup.md) | 1 |
 | 3 | `feat/vin-decode` | [VIN decode](superpowers/plans/2026-09-30-vin-decode.md) | 1 |
 | 4 | `feat/diagram-browse` | [diagram browsing](superpowers/plans/2026-09-30-diagram-browse.md) | 1, 3 (imports `parsers/select.py` and `models/select.py`) |
-| 5 | `feat/vehicle-index` | [vehicle index](superpowers/plans/2026-09-30-vehicle-index.md) | 1 (updates the diagram-browse skill from 4) |
+| 5 | `feat/vehicle-index` | [vehicle index](superpowers/plans/2026-09-30-vehicle-index.md) | 1 (its skill points to `list_part_groups`; no edits to branch 4 files) |
 | 6 | `feat/fitment` | [fitment](superpowers/plans/2026-09-30-fitment.md) | 2 (part-number helpers, supersession parser), 4 (diagram fetch helpers) |
 | 7 | `feat/supersession` | [supersession](superpowers/plans/2026-09-30-supersession.md) | 2 |
 
