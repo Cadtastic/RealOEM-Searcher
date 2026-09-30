@@ -1,3 +1,6 @@
+import copy
+import dataclasses
+import pickle
 from pathlib import Path
 
 import pytest
@@ -186,15 +189,23 @@ def test_invalid_series_pattern_names_file_and_pattern(tmp_path: Path) -> None:
     assert str(path) in str(info.value)
 
 
-def test_extra_is_read_only_but_still_a_mapping(tmp_path: Path) -> None:
+def test_brand_stays_hashable_copyable_and_serializable(tmp_path: Path) -> None:
     path = _write_brand(tmp_path, 'logo = "x.png"\n')
     brand = Brand.from_toml(path)
-    assert brand.extra.get("logo") == "x.png"
-    assert brand.extra.get("missing") is None
-    with pytest.raises(TypeError):
-        brand.extra["logo"] = "y.png"  # type: ignore[index]
+    assert brand.extra == {"logo": "x.png"}
     assert hash(brand) == hash(Brand.from_toml(path))
-    assert brand == Brand.from_toml(path)
+    assert dataclasses.asdict(brand)["extra"] == {"logo": "x.png"}
+    assert copy.deepcopy(brand) == brand
+    assert pickle.loads(pickle.dumps(brand)) == brand
+    assert pickle.loads(pickle.dumps(brand)).extra == {"logo": "x.png"}
+
+
+def test_directly_constructed_brand_validates_series_patterns() -> None:
+    with pytest.raises(ValueError, match=r"series_patterns.*\(\[unclosed"):
+        Brand(id="x", display_name="X", product="P", series_patterns=("([unclosed",))
+    assert Brand(
+        id="x", display_name="X", product="P", series_patterns=(r"^E\d+$",)
+    ).matches_series("E90")
 
 
 def test_load_requires_the_fallback_brands(tmp_path: Path) -> None:

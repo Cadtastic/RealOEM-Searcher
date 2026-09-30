@@ -138,7 +138,9 @@ def test_corrupt_database_is_replaced_with_a_warning(
     with caplog.at_level("WARNING", logger="realoem_mcp.cache"):
         cache = PageCache(cache_dir)
     try:
-        assert any("corrupt" in record.getMessage().lower() for record in caplog.records)
+        warnings = [r for r in caplog.records if r.name == "realoem_mcp.cache"]
+        assert [r.levelname for r in warnings] == ["WARNING"]
+        assert "recreating" in warnings[0].getMessage()
         assert cache.stats().entries == 0
         cache.put(_page(XREF, PageType.PARTXREF), timedelta(days=7))
         assert cache.get(XREF) is not None
@@ -159,3 +161,39 @@ def test_expired_rows_are_purged_on_open(tmp_path: Path) -> None:
         assert second.get(GRP) is not None
     finally:
         second.close()
+
+
+def test_locked_database_is_not_deleted(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    cache_dir = tmp_path / "cache"
+    PageCache(cache_dir).close()  # create a valid database
+    path = cache_dir / DB_FILENAME
+    real_connect = sqlite3.connect
+    monkeypatch.setattr(
+        "realoem_mcp.cache.sqlite3.connect",
+        lambda *args, **kwargs: real_connect(*args, **{**kwargs, "timeout": 0.05}),
+    )
+    holder = real_connect(path, isolation_level=None)
+    try:
+        holder.execute("BEGIN EXCLUSIVE")
+        with pytest.raises(sqlite3.OperationalError, match="locked"):
+            PageCache(cache_dir)
+    finally:
+        holder.close()
+    assert path.exists()
+    PageCache(cache_dir).close()  # still a usable database once the lock is released
+
+
+def test_corrupt_database_that_cannot_be_deleted_raises_with_a_note(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cache_dir = tmp_path / "cache"
+    cache_dir.mkdir()
+    (cache_dir / DB_FILENAME).write_bytes(b"this is definitely not a sqlite database" * 50)
+
+    def refuse(self: Path, missing_ok: bool = False) -> None:
+        raise PermissionError("in use")
+
+    monkeypatch.setattr(Path, "unlink", refuse)
+    with pytest.raises(sqlite3.DatabaseError) as info:
+        PageCache(cache_dir)
+    assert any("could not be deleted" in note for note in info.value.__notes__)

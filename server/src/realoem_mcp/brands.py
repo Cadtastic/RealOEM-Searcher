@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import re
 import tomllib
-from collections.abc import Iterable, Iterator, Mapping
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
+from functools import cache
 from pathlib import Path
-from types import MappingProxyType
 from typing import Any
 
 from realoem_mcp.vehicle_ids import VehicleId
@@ -30,10 +30,10 @@ class Brand:
     notes: str = ""
     dedupe_repeated_names: bool = False
     priority: int = 100
-    extra: Mapping[str, Any] = field(default_factory=dict, hash=False, compare=False)
+    extra: dict[str, Any] = field(default_factory=dict, hash=False, compare=False)
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "extra", MappingProxyType(dict(self.extra)))
+        _compile_patterns(tuple(self.series_patterns))  # fail fast on a bad regex
 
     @classmethod
     def from_toml(cls, path: Path) -> Brand:
@@ -64,7 +64,19 @@ class Brand:
         return any(keyword in label for keyword in self.label_keywords)
 
     def matches_series(self, code: str) -> bool:
-        return any(re.search(pattern, code) for pattern in self.series_patterns)
+        return any(regex.search(code) for regex in _compile_patterns(tuple(self.series_patterns)))
+
+
+@cache
+def _compile_patterns(patterns: tuple[str, ...]) -> tuple[re.Pattern[str], ...]:
+    """Compiled series patterns; cached module-wide so Brand itself stays plain data."""
+    compiled = []
+    for pattern in patterns:
+        try:
+            compiled.append(re.compile(pattern))
+        except re.error as error:
+            raise ValueError(f"invalid series_patterns entry {pattern!r}: {error}") from None
+    return tuple(compiled)
 
 
 def _check_types(path: Path, data: dict[str, Any]) -> None:
@@ -78,13 +90,10 @@ def _check_types(path: Path, data: dict[str, Any]) -> None:
     priority = data.get("priority", 100)
     if isinstance(priority, bool) or not isinstance(priority, int):
         raise ValueError(f"{path}: priority must be an integer, got {priority!r}")
-    for pattern in data.get("series_patterns", []):
-        try:
-            re.compile(pattern)
-        except re.error as error:
-            raise ValueError(
-                f"{path}: invalid series_patterns entry {pattern!r}: {error}"
-            ) from None
+    try:
+        _compile_patterns(tuple(data.get("series_patterns", [])))
+    except ValueError as error:
+        raise ValueError(f"{path}: {error}") from None
 
 
 class BrandRegistry:

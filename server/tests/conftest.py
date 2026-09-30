@@ -47,7 +47,11 @@ async def make_services(tmp_path: Path) -> AsyncIterator[MakeServices]:
         except Exception as exc:
             close_errors.append(exc)
     for _, transport in created:
-        assert transport.unmatched == [], f"unexpected requests: {transport.unmatched}"
+        if transport.unmatched:
+            # Chain the close error (if any) so it is not hidden by the assertion.
+            raise AssertionError(f"unexpected requests: {transport.unmatched}") from (
+                close_errors[0] if close_errors else None
+            )
     if close_errors:
         raise close_errors[0]
 

@@ -29,6 +29,14 @@ def _iso(value: datetime) -> str:
     return value.astimezone(UTC).isoformat(timespec="microseconds")
 
 
+def _is_corruption(error: sqlite3.DatabaseError) -> bool:
+    """True only for a damaged or non-SQLite file (OperationalError covers locks and I/O)."""
+    if isinstance(error, sqlite3.OperationalError):
+        return False
+    code = getattr(error, "sqlite_errorcode", None)
+    return code is not None and (code & 0xFF) in (sqlite3.SQLITE_CORRUPT, sqlite3.SQLITE_NOTADB)
+
+
 @dataclass(frozen=True)
 class CacheStats:
     entries: int
@@ -44,8 +52,14 @@ class PageCache:
         try:
             self._conn = self._open()
         except sqlite3.DatabaseError as error:
+            if not _is_corruption(error):
+                raise  # locked, read-only, disk I/O...: the file is fine, so never delete it
             logger.warning("page cache %s is unusable (%s); recreating it", self.path, error)
-            self._delete_database_files()
+            try:
+                self._delete_database_files()
+            except OSError as os_error:
+                error.add_note(f"the corrupt cache {self.path} could not be deleted: {os_error}")
+                raise error from os_error
             self._conn = self._open()
 
     def _open(self) -> sqlite3.Connection:
