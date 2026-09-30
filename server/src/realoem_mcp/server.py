@@ -15,6 +15,8 @@ from realoem_mcp import __version__
 from realoem_mcp.config import Settings
 from realoem_mcp.services import Services, create_services
 
+log = logging.getLogger(__name__)
+
 INSTRUCTIONS = (
     "Look up BMW, MINI, Rolls-Royce and BMW Motorrad OEM parts on RealOEM.com. Every RealOEM "
     "request is rate limited and cached, so call tools only for what the user asked, and include "
@@ -26,7 +28,11 @@ def build_server(services: Services) -> MCPServer:
     app = MCPServer("realoem", instructions=INSTRUCTIONS, version=__version__)
     package = realoem_mcp.tools
     for module_info in pkgutil.iter_modules(package.__path__):
-        module = importlib.import_module(f"{package.__name__}.{module_info.name}")
+        try:
+            module = importlib.import_module(f"{package.__name__}.{module_info.name}")
+        except Exception:
+            log.exception("failed to load tools module %s", module_info.name)
+            raise
         register = getattr(module, "register", None)
         if callable(register):
             register(app, services)

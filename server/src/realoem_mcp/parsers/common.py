@@ -25,7 +25,11 @@ def tree(html: str) -> Tree:
 
 
 def text(node: Node | None) -> str:
-    """All text under node with whitespace collapsed; "" for None."""
+    """All text under node with whitespace collapsed; "" for None.
+
+    <br> and block-level boundaries are NOT turned into spaces: text on either side of them is
+    joined as written. Callers that need a separator there must split the nodes themselves.
+    """
     if node is None:
         return ""
     return " ".join(node.text(deep=True).split())
@@ -92,7 +96,8 @@ def json_ld(root: Tree | Node, type_: str) -> list[dict[str, Any]]:
         for item in data if isinstance(data, list) else [data]:
             if not isinstance(item, dict):
                 continue
-            for obj in item.get("@graph", [item]):
+            graph = item.get("@graph", [item])
+            for obj in [graph] if isinstance(graph, dict) else graph:
                 if isinstance(obj, dict) and _has_type(obj, type_):
                     found.append(obj)
     return found

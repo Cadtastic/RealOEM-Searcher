@@ -59,7 +59,13 @@ def test_parse_my(value: str, expected: str | None) -> None:
 
 @pytest.mark.parametrize(
     ("value", "expected"),
-    [("20051000", "2005-10"), ("20080700", "2008-07"), ("200510", None), ("", None)],
+    [
+        ("20051000", "2005-10"),
+        ("20080700", "2008-07"),
+        ("200510", None),
+        ("", None),
+        ("x20051000y", None),  # must be the whole value, not just contain a code
+    ],
 )
 def test_parse_yyyymm00(value: str, expected: str | None) -> None:
     assert parse_yyyymm00(value) == expected
@@ -114,3 +120,10 @@ def test_json_ld_handles_graphs_lists_and_bad_json() -> None:
         {"@type": "ImageObject", "n": 1},
         {"@type": ["Thing", "ImageObject"]},
     ]
+
+
+def test_json_ld_accepts_a_single_object_graph() -> None:
+    doc = tree(
+        '<script type="application/ld+json">{"@graph": {"@type": "ImageObject", "n": 2}}</script>'
+    )
+    assert json_ld(doc, "ImageObject") == [{"@type": "ImageObject", "n": 2}]

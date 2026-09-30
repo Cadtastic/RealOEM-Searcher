@@ -23,7 +23,8 @@ async def make_services(tmp_path: Path) -> AsyncIterator[MakeServices]:
     """make_services(routes) -> (services, transport), offline and with a fake clock.
 
     Async fixture: use it only from tests marked @pytest.mark.anyio. Teardown closes every
-    Services it created, then fails the test if any request had no route.
+    Services it created, then fails the test if any request had no route, then re-raises the
+    first close error.
     """
     created: list[tuple[Services, FixtureTransport]] = []
 
@@ -39,10 +40,16 @@ async def make_services(tmp_path: Path) -> AsyncIterator[MakeServices]:
         return services, transport
 
     yield factory
+    close_errors: list[Exception] = []
     for services, _ in created:
-        await services.aclose()
+        try:
+            await services.aclose()
+        except Exception as exc:
+            close_errors.append(exc)
     for _, transport in created:
         assert transport.unmatched == [], f"unexpected requests: {transport.unmatched}"
+    if close_errors:
+        raise close_errors[0]
 
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:

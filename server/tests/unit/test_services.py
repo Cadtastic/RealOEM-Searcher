@@ -3,6 +3,8 @@ from pathlib import Path
 
 import pytest
 
+from realoem_mcp import services as services_module
+from realoem_mcp.cache import PageCache
 from realoem_mcp.config import Settings
 from realoem_mcp.page_types import PageType
 from realoem_mcp.services import Services, create_services
@@ -70,6 +72,56 @@ async def test_aclose_closes_everything_even_if_one_close_fails(tmp_path: Path) 
     assert after.closed
     with pytest.raises(sqlite3.ProgrammingError):
         services.cache.stats()  # the cache was closed too
+
+
+async def test_aclose_closes_extras_then_client_then_cache(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    services = create_services(_settings(tmp_path))
+    order: list[str] = []
+
+    class Recorder:
+        def close(self) -> None:
+            order.append("extra")
+
+    original_client_close = services.client.aclose
+    original_cache_close = services.cache.close
+
+    async def client_close() -> None:
+        order.append("client")
+        await original_client_close()
+
+    def cache_close() -> None:
+        order.append("cache")
+        original_cache_close()
+
+    monkeypatch.setattr(services.client, "aclose", client_close)
+    monkeypatch.setattr(services.cache, "close", cache_close)
+    services.extras["recorder"] = Recorder()
+    await services.aclose()
+    assert order == ["extra", "client", "cache"]
+
+
+async def test_create_services_closes_the_cache_if_client_construction_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    caches: list[PageCache] = []
+
+    class SpyCache(PageCache):
+        def __init__(self, cache_dir: Path) -> None:
+            super().__init__(cache_dir)
+            caches.append(self)
+
+    def broken_client(*args: object, **kwargs: object) -> None:
+        raise RuntimeError("client boom")
+
+    monkeypatch.setattr(services_module, "PageCache", SpyCache)
+    monkeypatch.setattr(services_module, "RealOemClient", broken_client)
+    with pytest.raises(RuntimeError, match="client boom"):
+        create_services(_settings(tmp_path))
+    (cache,) = caches
+    with pytest.raises(sqlite3.ProgrammingError):
+        cache.stats()  # closed
 
 
 async def test_make_services_fixture_returns_services_and_transport(make_services) -> None:
