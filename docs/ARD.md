@@ -175,9 +175,11 @@ RealOEM-Searcher/
 - Tools are exposed to Claude as `mcp__plugin_realoem-searcher_realoem__<tool>`; skills refer to them by
   short name (`lookup_part`).
 - `marketplace.json`: `{"name": "realoem-searcher", "owner": {"name": "Cadtastic"}, "plugins": [{"name":
-  "realoem-searcher", "source": "./", ...}]}`. `Cadtastic/Claude-Plugin-Collection` lists it with
-  `"source": {"source": "github", "repo": "Cadtastic/RealOEM-Searcher", "ref": "v<version>"}` (release
-  step, outside the feature branches).
+  "realoem-searcher", "source": "./", ...}]}`. `Cadtastic/Claude-Plugin-Collection` (marketplace
+  `cadtastic`) lists it with `"source": {"source": "url", "url":
+  "https://github.com/Cadtastic/RealOEM-Searcher.git", "ref": "v<version>"}` (release step, outside the
+  feature branches). Not the `github` source form: Claude Code clones that over SSH, which fails for
+  users without a GitHub SSH key.
 - Validate locally before each PR with `claude plugin validate . --strict` (the marketplace) and
   `claude plugin validate .claude-plugin/plugin.json --strict` (the plugin manifest).
 
