@@ -36,7 +36,8 @@ def is_past_end(html: str) -> bool:
     root = tree(html)
     if root.css_first("table#vi-table > tbody > tr.r0, table#vi-table > tbody > tr.r1") is None:
         return True
-    numbers = root.css("#vi-result-bar > span strong")
+    bar = root.css_first("#vi-result-bar > span")  # the same node parse_vehicles reads
+    numbers = bar.css("strong") if bar is not None else []
     showing = _RANGE.fullmatch(text(numbers[0])) if numbers else None
     if showing is None:
         return False  # parse_vehicles reports the unreadable result bar
