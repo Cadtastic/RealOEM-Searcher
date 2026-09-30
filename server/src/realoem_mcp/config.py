@@ -42,14 +42,16 @@ class Settings:
         for name in ("min_interval_s", "timeout_s"):
             if not math.isfinite(float(getattr(self, name))):
                 raise ValueError(f"{name} must be a finite number, got {getattr(self, name)!r}")
+        if float(self.timeout_s) <= 0:
+            raise ValueError(f"timeout_s must be greater than 0, got {self.timeout_s!r}")
         object.__setattr__(self, "base_url", self.base_url.rstrip("/"))
         object.__setattr__(
             self, "min_interval_s", max(float(self.min_interval_s), MIN_INTERVAL_FLOOR_S)
         )
         object.__setattr__(self, "timeout_s", float(self.timeout_s))
-        object.__setattr__(self, "cache_dir", Path(self.cache_dir))
-        object.__setattr__(self, "data_dir", Path(self.data_dir))
-        object.__setattr__(self, "brands_dir", Path(self.brands_dir))
+        object.__setattr__(self, "cache_dir", Path(self.cache_dir).expanduser())
+        object.__setattr__(self, "data_dir", Path(self.data_dir).expanduser())
+        object.__setattr__(self, "brands_dir", Path(self.brands_dir).expanduser())
 
     @classmethod
     def from_env(cls, environ: Mapping[str, str] | None = None) -> Settings:
@@ -60,13 +62,16 @@ class Settings:
         if value := env.get("REALOEM_MIN_INTERVAL"):
             kwargs["min_interval_s"] = _to_float("REALOEM_MIN_INTERVAL", value)
         if value := env.get("REALOEM_TIMEOUT"):
-            kwargs["timeout_s"] = _to_float("REALOEM_TIMEOUT", value)
+            timeout = _to_float("REALOEM_TIMEOUT", value)
+            if timeout <= 0:
+                raise ValueError(f"REALOEM_TIMEOUT must be greater than 0, got {value!r}")
+            kwargs["timeout_s"] = timeout
         if value := env.get("REALOEM_CACHE_DIR"):
-            kwargs["cache_dir"] = Path(value)
+            kwargs["cache_dir"] = Path(value).expanduser()
         if value := env.get("REALOEM_DATA_DIR"):
-            kwargs["data_dir"] = Path(value)
+            kwargs["data_dir"] = Path(value).expanduser()
         if value := env.get("REALOEM_BRANDS_DIR"):
-            kwargs["brands_dir"] = Path(value)
+            kwargs["brands_dir"] = Path(value).expanduser()
         return cls(**kwargs)  # type: ignore[arg-type]
 
 

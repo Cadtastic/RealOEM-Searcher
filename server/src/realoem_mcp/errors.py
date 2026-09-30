@@ -41,5 +41,6 @@ class UpstreamError(RealOemError):
     def __init__(self, status: int | None, url: str, detail: str | None = None) -> None:
         self.status = status
         self.url = url
+        self.detail = detail
         reason = f"HTTP {status}" if status is not None else (detail or "a network error")
         super().__init__(f"RealOEM request failed ({reason}) for {url}. Try again later.")

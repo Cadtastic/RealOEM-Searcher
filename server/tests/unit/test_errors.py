@@ -44,3 +44,9 @@ def test_upstream_error_status_or_detail() -> None:
     timeout = UpstreamError(None, "https://x/a", "timed out")
     assert timeout.status is None
     assert "timed out" in timeout.message
+
+
+def test_upstream_error_keeps_detail() -> None:
+    assert UpstreamError(None, "https://x/a", "timed out").detail == "timed out"
+    assert UpstreamError(503, "https://x/a").detail is None
+    assert "timed out" not in UpstreamError(503, "https://x/a", "timed out").message

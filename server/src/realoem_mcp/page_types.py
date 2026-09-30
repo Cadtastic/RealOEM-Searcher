@@ -25,7 +25,7 @@ class PageType(StrEnum):
     @classmethod
     def parse(cls, value: str) -> PageType:
         try:
-            return cls(value)
+            return cls(value.strip().lower() if isinstance(value, str) else value)
         except ValueError:
             allowed = ", ".join(member.value for member in cls)
             raise InvalidInput(f"Unknown page type {value!r}; use one of: {allowed}.") from None

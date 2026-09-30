@@ -69,3 +69,31 @@ def test_bad_number_names_the_variable(name: str, value: str) -> None:
 def test_non_finite_values_are_rejected_directly(field: str, value: float) -> None:
     with pytest.raises(ValueError, match=field):
         Settings(**{field: value})
+
+
+@pytest.mark.parametrize("value", ["0", "-1", "-0.5"])
+def test_env_timeout_must_be_positive(value: str) -> None:
+    with pytest.raises(ValueError, match="REALOEM_TIMEOUT"):
+        Settings.from_env({"REALOEM_TIMEOUT": value})
+
+
+@pytest.mark.parametrize("value", [0, -1.0])
+def test_direct_timeout_must_be_positive(value: float) -> None:
+    with pytest.raises(ValueError, match="timeout_s"):
+        Settings(timeout_s=value)
+
+
+def test_path_settings_expand_user(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    settings = Settings.from_env(
+        {
+            "REALOEM_CACHE_DIR": "~/cache",
+            "REALOEM_DATA_DIR": "~/data",
+            "REALOEM_BRANDS_DIR": "~/brands",
+        }
+    )
+    assert settings.cache_dir == tmp_path / "cache"
+    assert settings.data_dir == tmp_path / "data"
+    assert settings.brands_dir == tmp_path / "brands"
+    assert Settings(cache_dir=Path("~/c")).cache_dir == tmp_path / "c"

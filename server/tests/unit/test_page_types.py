@@ -40,3 +40,16 @@ def test_parse_accepts_values_and_rejects_others() -> None:
     assert PageType.parse("partxref") is PageType.PARTXREF
     with pytest.raises(InvalidInput, match="use one of: select, production"):
         PageType.parse("vin")
+
+
+@pytest.mark.parametrize("value", [" PartXref ", "PARTXREF", "\tpartxref\n"])
+def test_parse_tolerates_case_and_whitespace(value: str) -> None:
+    assert PageType.parse(value) is PageType.PARTXREF
+
+
+def test_parse_error_text_for_invalid_value_is_unchanged() -> None:
+    with pytest.raises(InvalidInput) as info:
+        PageType.parse(" Vin ")
+    assert info.value.message.startswith(
+        "Unknown page type ' Vin '; use one of: select, production"
+    )
