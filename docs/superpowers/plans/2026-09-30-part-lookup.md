@@ -126,7 +126,7 @@ Expected: `Switched to a new branch 'feat/part-lookup'`.
 - [ ] **Step 2: Confirm the foundation baseline is green**
 
 Run: `uv run --directory server pytest -q`
-Expected: PASS (`196 passed, 1 deselected`, the foundation plan's final count). If the count
+Expected: PASS (`197 passed, 1 deselected`, the foundation plan's final count). If the count
 differs, stop and check that `feat/foundation` is fully merged.
 
 ### Task 1: partxref fixtures
@@ -2177,7 +2177,7 @@ uv run --directory server ruff check
 uv run --directory server ruff format --check
 ```
 
-Expected: `343 passed, 2 deselected`, `All checks passed!`, `58 files already formatted`.
+Expected: `344 passed, 2 deselected`, `All checks passed!`, `58 files already formatted`.
 
 - [ ] **Step 2: Smoke-test the tool over stdio with the plugin's launch command**
 
