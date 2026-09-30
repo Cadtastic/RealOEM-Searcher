@@ -1,0 +1,129 @@
+import sqlite3
+from contextlib import closing
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+
+import pytest
+
+from realoem_mcp.cache import DB_FILENAME, SCHEMA_VERSION, PageCache
+from realoem_mcp.http_client import Page
+from realoem_mcp.page_types import PageType
+
+XREF = "https://www.realoem.com/bmw/enUS/partxref?q=11427953129"
+GRP = "https://www.realoem.com/bmw/enUS/partgrp?id=VB13-USA-10-2005-E90-BMW-325i"
+
+
+def _page(url: str, page_type: PageType, *, age: timedelta = timedelta(0), html: str = "<p>ok</p>"):
+    return Page(
+        page_type=page_type,
+        url=url,
+        final_url=url,
+        status=200,
+        html=html,
+        fetched_at=datetime.now(UTC) - age,
+        from_cache=False,
+    )
+
+
+@pytest.fixture
+def cache(tmp_path: Path):
+    cache = PageCache(tmp_path / "cache")
+    yield cache
+    cache.close()
+
+
+def test_creates_database_in_cache_dir(tmp_path: Path) -> None:
+    cache = PageCache(tmp_path / "nested" / "cache")
+    try:
+        assert cache.path == tmp_path / "nested" / "cache" / DB_FILENAME
+        assert cache.path.exists()
+    finally:
+        cache.close()
+
+
+def test_put_then_get_round_trips_as_cached(cache: PageCache) -> None:
+    page = _page(XREF, PageType.PARTXREF)
+    cache.put(page, timedelta(days=7))
+    hit = cache.get(XREF)
+    assert hit is not None
+    assert hit.from_cache is True
+    assert (hit.page_type, hit.url, hit.final_url, hit.status, hit.html) == (
+        PageType.PARTXREF,
+        XREF,
+        XREF,
+        200,
+        "<p>ok</p>",
+    )
+    assert hit.fetched_at == page.fetched_at
+    assert hit.fetched_at.tzinfo is not None
+
+
+def test_miss_returns_none(cache: PageCache) -> None:
+    assert cache.get(XREF) is None
+
+
+def test_expired_entry_is_not_returned(cache: PageCache) -> None:
+    cache.put(_page(XREF, PageType.PARTXREF, age=timedelta(days=8)), timedelta(days=7))
+    assert cache.get(XREF) is None
+
+
+def test_shorten_caps_lifetime(cache: PageCache) -> None:
+    cache.put(_page(XREF, PageType.PARTXREF, age=timedelta(days=2)), timedelta(days=180))
+    cache.shorten(XREF, timedelta(days=1))
+    assert cache.get(XREF) is None
+
+
+def test_shorten_never_extends_lifetime(cache: PageCache) -> None:
+    cache.put(_page(XREF, PageType.PARTXREF, age=timedelta(days=2)), timedelta(days=1))
+    cache.shorten(XREF, timedelta(days=30))
+    assert cache.get(XREF) is None
+
+
+def test_shorten_unknown_url_is_a_no_op(cache: PageCache) -> None:
+    cache.shorten(XREF, timedelta(days=1))
+    assert cache.stats().entries == 0
+
+
+def test_clear_all_and_by_page_type(cache: PageCache) -> None:
+    cache.put(_page(XREF, PageType.PARTXREF), timedelta(days=7))
+    cache.put(_page(GRP, PageType.PARTGRP), timedelta(days=30))
+    assert cache.clear(PageType.PARTGRP) == 1
+    assert cache.get(GRP) is None
+    assert cache.get(XREF) is not None
+    assert cache.clear() == 1
+    assert cache.stats().entries == 0
+
+
+def test_stats_counts_entries_and_utf8_bytes(cache: PageCache) -> None:
+    cache.put(_page(XREF, PageType.PARTXREF, html="ä"), timedelta(days=7))
+    cache.put(_page(GRP, PageType.PARTGRP, html="abc"), timedelta(days=7))
+    stats = cache.stats()
+    assert (stats.entries, stats.bytes, stats.path) == (2, 5, cache.path)
+
+
+def test_schema_version_mismatch_resets_tables(tmp_path: Path) -> None:
+    cache = PageCache(tmp_path)
+    cache.put(_page(XREF, PageType.PARTXREF), timedelta(days=7))
+    cache.close()
+    with closing(sqlite3.connect(tmp_path / DB_FILENAME)) as conn:
+        conn.execute("UPDATE meta SET value = '0' WHERE key = 'schema_version'")
+        conn.commit()
+    reopened = PageCache(tmp_path)
+    try:
+        assert reopened.stats().entries == 0
+        with closing(sqlite3.connect(tmp_path / DB_FILENAME)) as conn:
+            version = conn.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()
+        assert version == (SCHEMA_VERSION,)
+    finally:
+        reopened.close()
+
+
+def test_matching_schema_keeps_data(tmp_path: Path) -> None:
+    cache = PageCache(tmp_path)
+    cache.put(_page(XREF, PageType.PARTXREF), timedelta(days=7))
+    cache.close()
+    reopened = PageCache(tmp_path)
+    try:
+        assert reopened.get(XREF) is not None
+    finally:
+        reopened.close()
