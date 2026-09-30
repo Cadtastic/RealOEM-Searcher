@@ -1,3 +1,5 @@
+from datetime import UTC, datetime, timedelta
+from email.utils import format_datetime
 from pathlib import Path
 
 import httpx
@@ -149,3 +151,80 @@ async def test_ui_variant_other_than_v2_is_a_layout_change(run) -> None:
 async def test_ui_variant_v2_new_is_accepted(run) -> None:
     page, _, _ = await run(Script(httpx.Response(200, headers={"X-RO-UI": "v2+new"}, text="ok")))
     assert page.status == 200
+
+
+def _http_date(offset: timedelta) -> str:
+    return format_datetime(datetime.now(UTC) + offset, usegmt=True)
+
+
+async def test_http_date_retry_after_is_honoured(run) -> None:
+    script = Script(
+        httpx.Response(503, headers={"Retry-After": _http_date(timedelta(seconds=10))}),
+        httpx.Response(200, text="ok"),
+    )
+    _, clock, _ = await run(script)
+    (delay,) = clock.sleeps
+    assert 8.0 < delay <= 10.0
+
+
+async def test_http_date_retry_after_is_capped_and_never_negative(run) -> None:
+    script = Script(
+        httpx.Response(503, headers={"Retry-After": _http_date(timedelta(hours=1))}),
+        httpx.Response(503, headers={"Retry-After": _http_date(-timedelta(hours=1))}),
+        httpx.Response(200, text="ok"),
+    )
+    _, clock, _ = await run(script)
+    assert clock.sleeps[:1] == [30.0]
+    assert clock.sleeps[1] == 0.0
+
+
+async def test_unparseable_retry_after_falls_back_to_default_backoff(run) -> None:
+    script = Script(
+        httpx.Response(503, headers={"Retry-After": "next tuesday-ish"}), httpx.Response(200)
+    )
+    _, clock, _ = await run(script)
+    assert clock.sleeps == [5.0]
+
+
+async def test_plain_403_without_cf_mitigated_is_an_upstream_error(run) -> None:
+    script = Script(httpx.Response(403, text="Forbidden"))
+    with pytest.raises(UpstreamError) as info:
+        await run(script)
+    assert not isinstance(info.value, BotChallenge)
+    assert info.value.status == 403
+    assert script.calls == 1
+
+
+async def test_zero_retry_after_still_waits_the_min_interval(run) -> None:
+    script = Script(httpx.Response(429, headers={"Retry-After": "0"}), httpx.Response(200))
+    _, clock, _ = await run(script)
+    assert clock.sleeps == [0.0, 2.0]
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        httpx.Response(403, headers={"cf-mitigated": "challenge"}, text=CHALLENGE),
+        httpx.Response(403, text="Forbidden"),
+    ],
+)
+async def test_failed_fetches_are_not_cached(tmp_path: Path, failure: httpx.Response) -> None:
+    script = Script(failure, httpx.Response(200, text="<p>ok</p>"))
+    clock = FakeClock()
+    cache = PageCache(tmp_path / "cache")
+    client = RealOemClient(
+        Settings(cache_dir=tmp_path),
+        cache,
+        transport=httpx.MockTransport(script),
+        clock=clock,
+        sleep=clock.sleep,
+    )
+    try:
+        with pytest.raises((BotChallenge, UpstreamError)):
+            await client.fetch(PageType.PARTXREF, "partxref", PARAMS)
+        page = await client.fetch(PageType.PARTXREF, "partxref", PARAMS)
+        assert page.html == "<p>ok</p>"
+        assert script.calls == 2
+    finally:
+        await client.aclose()
+        cache.close()

@@ -10,6 +10,7 @@ import time
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from email.utils import parsedate_to_datetime
 from http.cookiejar import Cookie, CookieJar, DefaultCookiePolicy
 from typing import TYPE_CHECKING
 from urllib.parse import quote, urlencode, urlsplit
@@ -28,8 +29,8 @@ log = logging.getLogger(__name__)
 
 COOKIE = "ro_ui=v2"
 MAX_REDIRECTS = 3
-MAX_RETRIES = 2
 RETRY_DELAYS_S = (5.0, 15.0)
+MAX_RETRIES = len(RETRY_DELAYS_S)
 RETRY_AFTER_CAP_S = 30.0
 CHALLENGE_TITLE = "<title>Just a moment...</title>"
 _PATH_RE = re.compile(r"[a-z]+")
@@ -172,6 +173,7 @@ class RealOemClient:
                 attempt += 1
                 continue
             except _OffsiteRedirect as exc:
+                log.warning("refused off-site redirect from %s to %s", url, exc.target)
                 raise UpstreamError(None, url, f"redirected off-site to {exc.target}") from None
             except httpx.RequestError as exc:  # network, decoding, too many redirects
                 raise UpstreamError(None, url, type(exc).__name__) from None
@@ -233,10 +235,19 @@ def _is_challenge(response: httpx.Response) -> bool:
 
 
 def _retry_delay(response: httpx.Response, attempt: int) -> float:
+    """Retry-After (delta-seconds or HTTP-date) capped at RETRY_AFTER_CAP_S, else the backoff."""
+    default = RETRY_DELAYS_S[attempt]
+    header = response.headers.get("Retry-After", "").strip()
     try:
-        seconds = float(response.headers.get("Retry-After", ""))
+        seconds = float(header)
     except ValueError:
-        return RETRY_DELAYS_S[attempt]
+        try:
+            when = parsedate_to_datetime(header)
+        except (TypeError, ValueError, IndexError):
+            return default
+        if when.tzinfo is None:
+            when = when.replace(tzinfo=UTC)
+        seconds = (when - datetime.now(UTC)).total_seconds()
     if not math.isfinite(seconds):
-        return RETRY_DELAYS_S[attempt]
+        return default
     return min(max(seconds, 0.0), RETRY_AFTER_CAP_S)

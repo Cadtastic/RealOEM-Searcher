@@ -62,6 +62,12 @@ async def test_server_cookies_are_never_sent_back(make_client) -> None:
     assert [r.headers["Cookie"] for r in transport.requests] == ["ro_ui=v2", "ro_ui=v2"]
 
 
+async def test_server_cookies_are_never_stored(make_client) -> None:
+    client, _, _ = make_client({XREF: Route(headers={"Set-Cookie": "pvin=abc; Path=/"})})
+    await client.fetch(PageType.PARTXREF, "partxref", XREF_PARAMS)
+    assert len(client._http.cookies.jar) == 0
+
+
 async def test_fetch_returns_page_and_caches_it(make_client) -> None:
     client, transport, _ = make_client({XREF: "common/partgrp_e90_325i.html"})
     first = await client.fetch(PageType.PARTXREF, "partxref", XREF_PARAMS)
@@ -171,6 +177,18 @@ async def test_redirect_to_another_host_is_refused(make_client) -> None:
     assert "redirected off-site to https://tracker.example/x" in info.value.message
     assert [str(r.url) for r in transport.requests] == [XREF]  # the off-site hop is never sent
     assert client.cached(PageType.PARTXREF, "partxref", XREF_PARAMS) is None
+
+
+async def test_refused_off_site_redirect_is_logged_as_a_warning(make_client, caplog) -> None:
+    client, _, _ = make_client({XREF: Route(redirect_to="https://tracker.example/x")})
+    with (
+        caplog.at_level(logging.WARNING, logger="realoem_mcp.http_client"),
+        pytest.raises(UpstreamError),
+    ):
+        await client.fetch(PageType.PARTXREF, "partxref", XREF_PARAMS)
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1
+    assert "https://tracker.example/x" in warnings[0].getMessage()
 
 
 async def test_non_200_raises_upstream_error_and_is_not_cached(make_client) -> None:
