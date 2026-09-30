@@ -6,7 +6,7 @@ from realoem_mcp.brands import BrandRegistry
 from realoem_mcp.errors import LayoutChanged
 from realoem_mcp.models.vehicles import VehicleIndexPage
 from realoem_mcp.parsers.vehicles import (
-    has_vehicle_rows,
+    is_past_end,
     parse_vehicles,
     product_for_type,
     row_key,
@@ -17,6 +17,8 @@ from tests.vehicle_data import numbered, render_page, vehicle
 BRANDS = BrandRegistry.load(BRANDS_DIR)
 URL = "https://www.realoem.com/bmw/enUS/vehicles?page=2&sort=year"
 REAL_P2 = load_fixture("vehicles/sort_year_p2.html")
+REAL_P165 = load_fixture("vehicles/sort_year_p165.html")
+REAL_PAST_END = load_fixture("vehicles/sort_year_past_end.html")
 EMPTY_TABLE = '<html><body><table id="vi-table"><tbody></tbody></table></body></html>'
 LAST_LINK = '/bmw/enUS/vehicles?page=165&amp;sort=year" title="Last page"'
 
@@ -62,11 +64,16 @@ def test_type_code_starting_with_zero_means_motorcycle() -> None:
     assert (product_for_type("0X99"), product_for_type("AB12")) == ("M", "P")
 
 
-def test_a_page_past_the_end_has_no_vehicle_rows() -> None:
-    assert has_vehicle_rows(REAL_P2)
-    assert has_vehicle_rows(render_page(numbered(120), 3))
-    assert not has_vehicle_rows(render_page(numbered(120), 4))  # no table at all
-    assert not has_vehicle_rows(EMPTY_TABLE)
+def test_a_page_past_the_end_is_recognised() -> None:
+    assert not is_past_end(REAL_P2)
+    assert not is_past_end(REAL_P165)  # the real last page ("Showing 8201-8218")
+    assert not is_past_end(render_page(numbered(120), 3))
+    assert is_past_end(render_page(numbered(120), 4))  # no table at all
+    assert is_past_end(EMPTY_TABLE)
+    # RealOEM's real answer past its end repeats the last page's rows under "Showing 8251-8218".
+    assert is_past_end(REAL_PAST_END)
+    with pytest.raises(LayoutChanged, match="18 rows but 'Showing 8251-8218'"):
+        _parse(REAL_PAST_END)
 
 
 def test_row_key() -> None:

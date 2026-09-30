@@ -194,9 +194,15 @@ async def test_a_replaced_row_is_drift_and_the_next_probe_stays_in_range(tmp_pat
 
 
 EMPTY_TABLE = '<html><body><table id="vi-table"><tbody></tbody></table></body></html>'
+# RealOEM's real answer past its end: the last page's rows again under "Showing 8251-8218".
+REPEATED_LAST_PAGE = load_fixture("vehicles/sort_year_past_end.html")
 
 
-@pytest.mark.parametrize("past_end_html", [None, EMPTY_TABLE], ids=["no-table", "empty-table"])
+@pytest.mark.parametrize(
+    "past_end_html",
+    [None, EMPTY_TABLE, REPEATED_LAST_PAGE],
+    ids=["no-table", "empty-table", "repeated-last-page"],
+)
 async def test_a_probe_past_the_end_reads_page_one_and_reports_drift(
     tmp_path: Path, past_end_html: str | None
 ) -> None:

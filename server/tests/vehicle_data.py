@@ -66,8 +66,9 @@ def numbered(count: int) -> list[IndexedVehicle]:
 def render_page(rows: Sequence[IndexedVehicle], number: int) -> str:
     """vehicles?page=<number>&sort=year for an index holding `rows` (same markup as RealOEM).
 
-    A page past the end renders without the vehicles table (RealOEM's exact markup for that case
-    was never captured; the tool only relies on the table being absent).
+    A page past the end renders without the vehicles table. RealOEM itself repeats the last
+    page's rows under "Showing 8251-8218" (fixture vehicles/sort_year_past_end.html); is_past_end
+    recognises both.
     """
     total = len(rows)
     last_page = max(1, math.ceil(total / PAGE_SIZE))

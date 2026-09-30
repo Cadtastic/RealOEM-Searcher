@@ -18,7 +18,7 @@ from realoem_mcp.models.vehicles import (
     VehicleSearchResult,
 )
 from realoem_mcp.page_types import PageType
-from realoem_mcp.parsers.vehicles import PAGE_SIZE, has_vehicle_rows, parse_vehicles
+from realoem_mcp.parsers.vehicles import PAGE_SIZE, is_past_end, parse_vehicles
 from realoem_mcp.services import Services
 from realoem_mcp.vehicle_index import VehicleIndex, sort_key
 
@@ -138,7 +138,7 @@ async def update_index(services: Services, max_pages: int) -> VehicleIndexUpdate
     probe_total = min(local_total, index.last_remote_total() or local_total)
     probe_number = max(1, math.ceil(probe_total / PAGE_SIZE))
     probe_page = await _fetch(services, probe_number)
-    if probe_number > 1 and not has_vehicle_rows(probe_page.html):  # past RealOEM's end
+    if probe_number > 1 and is_past_end(probe_page.html):
         services.cache.shorten(probe_page.url, timedelta(0))
         first, first_page = await fetch_vehicles_page(services, 1)
         index.record_check(remote_total=first.total, resume=None)

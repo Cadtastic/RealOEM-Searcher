@@ -29,12 +29,19 @@ def product_for_type(type_code: str) -> str:
     return "M" if type_code.startswith("0") else "P"
 
 
-def has_vehicle_rows(html: str) -> bool:
-    """False for a page past the end of the index (no table#vi-table, or a table without rows)."""
-    return (
-        tree(html).css_first("table#vi-table > tbody > tr.r0, table#vi-table > tbody > tr.r1")
-        is not None
-    )
+def is_past_end(html: str) -> bool:
+    """True for a page past the end of the index: no table#vi-table, a table without rows, or
+    RealOEM's live answer, which repeats the last page's rows under a result bar whose range
+    starts after it ends ("Showing 8251-8218" for page 166 of 165)."""
+    root = tree(html)
+    if root.css_first("table#vi-table > tbody > tr.r0, table#vi-table > tbody > tr.r1") is None:
+        return True
+    numbers = root.css("#vi-result-bar > span strong")
+    showing = _RANGE.fullmatch(text(numbers[0])) if numbers else None
+    if showing is None:
+        return False  # parse_vehicles reports the unreadable result bar
+    first, last = (int(group.replace(",", "")) for group in showing.groups())
+    return first > last
 
 
 def parse_vehicles(html: str, *, url: str, brands: BrandRegistry) -> VehicleIndexPage:
