@@ -280,7 +280,8 @@ Behavior:
    wait until `min_interval_s` has passed since the previous request start (injected `clock`/`sleep`);
    send GET with headers `User-Agent` (AD13), `Accept: text/html`, `Accept-Language: en-US` and exactly
    `Cookie: ro_ui=v2` (AD14; the `httpx.AsyncClient` is created without persisting cookies, and
-   server-set cookies are ignored); follow redirects.
+   server-set cookies are ignored); follow redirects **only within the base URL's host** (a redirect to
+   any other host → `UpstreamError`).
 4. Challenge detection: status 403/503 with header `cf-mitigated: challenge`, or `<title>Just a
    moment...</title>` in the body → `BotChallenge`. Never retried.
 5. 429 / 5xx / timeout → retry up to 2 times, waiting `Retry-After` (capped at 30 s) or 5 s then 15 s;
@@ -734,7 +735,7 @@ alternating A/B until done or `max_requests` network requests used → part-numb
   class FixtureTransport(httpx.AsyncBaseTransport):
       def __init__(self, routes: Mapping[str, Route | str]): ...   # key = full URL as built by build_url
       requests: list[httpx.Request]                                  # recorded, for assertions
-      # an unmatched URL raises AssertionError("unexpected request: <url>")
+      unmatched: list[str]                                           # see bullets below
 
   def url(path: str, **params: str) -> str: ...    # build_url with test Settings (same encoding/order)
 
@@ -752,7 +753,8 @@ alternating A/B until done or `max_requests` network requests used → part-numb
     `tests/conftest.py`.
   - `make_services(routes)` returns `(services, transport)`; tests assert on `transport.requests` (e.g.
     "rejected before any request" ⇒ `transport.requests == []`).
-  - Unmatched URLs are recorded in `transport.unmatched` and answered with HTTP 599; teardown asserts
+  - Unmatched URLs are recorded in `transport.unmatched` and answered with HTTP 404 (not retried, so
+    recorded once); teardown asserts
     `transport.unmatched == []`, so a stray request fails the test even if the tool reports `is_error`.
   - A redirect target that is not routed is served as an empty HTTP 200 (so `Route(redirect_to=
     LANDING_URL)` alone reproduces the invalid-id case).
@@ -762,9 +764,10 @@ alternating A/B until done or `max_requests` network requests used → part-numb
 - Fixture pipeline: `capture_page.py` (raw, into `.research-raw/`) → `trim_fixture.py` → commit trimmed
   file. Trimming removes `<script>` except `application/ld+json` and scripts containing `partsimgmap`,
   removes `<style>`, `<link>` (except canonical), `<iframe>`, `<ins>`, comments and ad containers
-  (`[id^="realoem-com_"]`), keeps `a.ecs-tuning-button[data-ecs-part-name]` attributes (description
-  source) but empties its children, and masks any 17-character VIN to its last 7 characters prefixed
-  with `XXXXXXXXXX`.
+  (`[id^="realoem-com_"]`), keeps `a.ecs-tuning-button` with only its `class` and
+  `data-ecs-part-name` attributes (description source; affiliate `href` and other attributes removed)
+  and empties its children, and masks any 17-character VIN to its last 7 characters prefixed with
+  `XXXXXXXXXX`.
 - CI (`.github/workflows/ci.yml`): `uv sync --locked`, `uv run ruff check`, `uv run ruff format --check`,
   `uv run pytest -m "not live"` on ubuntu (Python 3.11 and 3.13) and windows (3.13).
 
