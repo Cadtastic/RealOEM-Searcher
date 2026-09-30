@@ -339,7 +339,7 @@ priority = 10                         # lower = checked first when matching seri
   | `mini` | P | `Mini` | `^R5\d$`, `^R6\d$`, `^F5[4-7]$`, `^F60$`, `^J0\d$`, `^U25$` | `MINI` | `WMW`, `WMZ` | 10 |
   | `rolls-royce` | P | `Rolls_Royce` | `^RR\d+N?$`, `^R[12]\dN$` | `Rolls-Royce`, `Phantom`, `Ghost`, `Wraith`, `Dawn`, `Cullinan`, `Spectre` | `SCA` | 20 |
   | `motorrad` | M | `BMW` | `^K\d`, `^R\d` | — | `WB1`, `WB3` | 30 |
-  | `bmw` | P | `BMW` | — (fallback) | — | `WBA`, `WBS`, `WBY`, `5UX`, `5YM`, `4US` | 100 |
+  | `bmw` | P | `BMW` | — (fallback) | — | `WBA`, `WBS`, `WBY`, `WBX`, `5UX`, `5UM`, `5YM`, `4US`, `3MW`, `LBV` | 100 |
 
   `motorrad` sets `dedupe_repeated_names = true`. WMI lists are best-effort (verified in the B plan).
 - `BrandRegistry.load(dir)` reads all `brand.toml` files; `brand_segments()` returns every

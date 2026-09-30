@@ -2740,7 +2740,18 @@ def test_brand_toml_values(registry: BrandRegistry) -> None:
     assert registry.get("motorrad").product == "M"
     assert registry.get("motorrad").dedupe_repeated_names is True
     assert registry.get("rolls-royce").id_brand_segments == ("Rolls_Royce",)
-    assert registry.get("bmw").wmi == ("WBA", "WBS", "WBY", "5UX", "5YM", "4US")
+    assert registry.get("bmw").wmi == (
+        "WBA",
+        "WBS",
+        "WBY",
+        "WBX",
+        "5UX",
+        "5UM",
+        "5YM",
+        "4US",
+        "3MW",
+        "LBV",
+    )
 
 
 def test_brands_are_hashable(registry: BrandRegistry) -> None:
@@ -2796,6 +2807,7 @@ def test_for_vehicle_id(
 
 def test_for_wmi(registry: BrandRegistry) -> None:
     assert registry.for_wmi("WBA").id == "bmw"
+    assert registry.for_wmi("LBV").id == "bmw"
     assert registry.for_wmi("wmw").id == "mini"
     assert registry.for_wmi("SCA1234").id == "rolls-royce"
     assert registry.for_wmi("WB1").id == "motorrad"
@@ -2894,7 +2906,7 @@ product = "P"                         # P = cars, M = motorcycles
 id_brand_segments = ["BMW"]           # vehicle-id brand segment(s)
 series_patterns = []                  # fallback brand for cars: matches nothing explicitly
 label_keywords = []
-wmi = ["WBA", "WBS", "WBY", "5UX", "5YM", "4US"]
+wmi = ["WBA", "WBS", "WBY", "WBX", "5UX", "5UM", "5YM", "4US", "3MW", "LBV"]
 notes = "Fallback for every car series not claimed by another brand. LCI series end in N (E90N)."
 dedupe_repeated_names = false
 priority = 100                        # lower = checked first when matching series patterns
@@ -2914,7 +2926,8 @@ Brand notes for skills and parsers. Registry data lives in `brand.toml`.
   from labels.
 - Classic catalog (`archive=1`) holds E21, E30, E36, E46, E39, E38, E31, Z3 and others; Classic cars
   add Steering and Transmission cascade levels.
-- WMI prefixes: `WBA`, `WBS` (M), `WBY` (i), US-built `5UX`, `5YM`, `4US`.
+- WMI prefixes: `WBA`, `WBS` (M), `WBY` (i), `WBX`, US-built `5UX`, `5UM`, `5YM`, `4US`, Mexico `3MW`,
+  China `LBV`.
 ```
 
 Create `brands/mini/README.md`:
