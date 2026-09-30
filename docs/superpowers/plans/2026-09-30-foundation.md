@@ -94,7 +94,9 @@ Decisions this plan makes where the ARD leaves room (feature plans may rely on t
 - `Settings` rejects non-finite `min_interval_s` / `timeout_s` (`nan`, `inf`), and a non-finite
   `Retry-After` falls back to the default 5 s / 15 s backoff.
 - `trim_fixture.py` keeps only the `class` and `data-ecs-part-name` attributes of
-  `a.ecs-tuning-button` (the affiliate `href` and other attributes are dropped), and masks VINs that
+  `a.ecs-tuning-button` (the affiliate `href` and other attributes are dropped), removes
+  `a.ecs-tuning-link` affiliate links, empties `td.ecs-tuning-cell` (kept, so parts rows keep 11
+  cells), and masks VINs that
   stand alone or follow any percent-encoded character (`%3d`, `%2F`, ...). Test data uses the
   synthetic VIN `WBATEST0000000001`; never put a real VIN in code, tests, fixtures or docs.
 - `CacheStats.bytes` is the total UTF-8 size of cached HTML. `json_ld` returns a list of matching
@@ -717,7 +719,8 @@ git commit -m "feat(server): add PageType enum with cache TTLs" -m "Co-Authored-
 ARD §8 trimming rules: drop `<script>` except JSON-LD and the `partsimgmap` script; drop `<style>`,
 `<link>` except canonical, `<iframe>`, `<ins>`, comments and ad containers (`[id^="realoem-com_"]`);
 keep `a.ecs-tuning-button[data-ecs-part-name]` with only its `class` and `data-ecs-part-name`
-attributes (the affiliate `href` goes) and empty it; mask 17-character
+attributes (the affiliate `href` goes) and empty it; drop `a.ecs-tuning-link` affiliate links
+and empty `td.ecs-tuning-cell` (the empty cell stays, so parts rows keep 11 cells); mask 17-character
 VINs to `XXXXXXXXXX` + last 7, also right after any percent-encoded character (links such as
 `vin%3dWBA…`). Tests use the synthetic VIN `WBATEST0000000001` (masked `XXXXXXXXXX0000001`). Whitespace-only
 lines are collapsed, and the output is idempotent (`trim(trim(x)) == trim(x)`), which Task 6 relies on
@@ -759,6 +762,10 @@ RAW = """<!DOCTYPE html>
 <a href="/login?next=%2fselect%3fvin%3dWBATEST0000000001">Sign In</a>
 <a href="/share?u=%2fvin%2FWBATEST0000000001">Share</a>
 </div>
+<table id="partsList"><tr class="pos01"><td>01</td>
+<td class="ecs-tuning-cell"> <a class="ecs-tuning-link" data-ecs-part-name="Oil Pan"
+   href="https://click.example/pan">Shop</a> </td></tr></table>
+<p><a class="ecs-tuning-link" href="https://click.example/loose">ECS</a></p>
 <div id="partsimg"><script>var partsimgmap=[["01",78,255,87,271]];</script></div>
 </body></html>
 """
@@ -788,6 +795,15 @@ def test_keeps_only_ecs_class_and_part_name_and_empties_the_button() -> None:
     assert "data-ecs-part-number" not in out
     assert "Shop this part" not in out
     assert "at ECS" not in out
+
+
+def test_removes_ecs_links_and_empties_their_cells() -> None:
+    out = trim(RAW)
+    assert "ecs-tuning-link" not in out
+    assert "click.example/pan" not in out
+    assert "click.example/loose" not in out
+    assert '<td class="ecs-tuning-cell"></td>' in out
+    assert "<td>01</td>" in out
 
 
 def test_masks_full_vins_everywhere() -> None:
@@ -889,6 +905,11 @@ def trim(html: str) -> str:
         node.decompose()
     for node in [n for n in tree.root.traverse() if n.is_comment_node]:
         node.decompose()
+    for node in tree.css("a.ecs-tuning-link"):
+        node.decompose()
+    for cell in tree.css("td.ecs-tuning-cell"):  # keep the empty cell: part rows have 11 tds
+        for child in list(cell.iter(include_text=True)):
+            child.decompose()
     for button in tree.css("a.ecs-tuning-button[data-ecs-part-name]"):
         for child in list(button.iter(include_text=True)):
             child.decompose()
@@ -919,7 +940,7 @@ if __name__ == "__main__":
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `uv run --directory server pytest tests/unit/test_trim_fixture.py -q`
-Expected: PASS (`7 passed`)
+Expected: PASS (`8 passed`)
 
 Run: `uv run --directory server ruff check && uv run --directory server ruff format --check`
 Expected: PASS (`All checks passed!`)
@@ -2670,7 +2691,7 @@ def _split_brand(
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `uv run --directory server pytest tests/unit/test_vehicle_ids.py -q`
-Expected: PASS (`12 passed`)
+Expected: PASS (`13 passed`)
 
 Run: `uv run --directory server ruff check && uv run --directory server ruff format --check`
 Expected: PASS (`All checks passed!`)
@@ -3112,7 +3133,7 @@ class BrandRegistry:
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `uv run --directory server pytest tests/unit/test_brands.py -q`
-Expected: PASS (`29 passed`)
+Expected: PASS (`32 passed`)
 
 Run: `uv run --directory server ruff check && uv run --directory server ruff format --check`
 Expected: PASS (`All checks passed!`)
@@ -3855,7 +3876,7 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `uv run --directory server pytest -q`
-Expected: PASS (`180 passed`)
+Expected: PASS (`185 passed`)
 
 Run: `uv run --directory server ruff check && uv run --directory server ruff format --check`
 Expected: PASS (`All checks passed!`)
@@ -4875,7 +4896,7 @@ jobs:
 - [ ] **Step 2: Run the CI steps locally**
 
 Run: `uv sync --directory server --locked && uv run --directory server ruff check && uv run --directory server ruff format --check && uv run --directory server pytest -m "not live" -q`
-Expected: PASS (`All checks passed!`, `192 passed, 1 deselected`)
+Expected: PASS (`All checks passed!`, `197 passed, 1 deselected`)
 
 - [ ] **Step 3: Lint the workflow (optional)**
 
@@ -4900,7 +4921,7 @@ uv run --directory server ruff check
 uv run --directory server ruff format --check
 ```
 
-Expected: `192 passed, 1 deselected`, `All checks passed!`, `44 files already formatted`.
+Expected: `197 passed, 1 deselected`, `All checks passed!`, `44 files already formatted`.
 
 - [ ] **Step 2: Smoke-test the exact plugin launch command over stdio**
 
@@ -4953,9 +4974,10 @@ Expected: `✔ Validation passed` twice (see Task 21 if `claude` is not on `PATH
 Run: `git status --short && git ls-files | grep -E '^\.research-raw/|\.sqlite3$|\.venv/' || echo clean`
 Expected: no `git status` output and `clean`.
 
-Run: `git grep -nE '[A-HJ-NPR-Z0-9]{17}' -- ':(exclude)server/uv.lock' | grep -vE 'X{10}[A-HJ-NPR-Z0-9]{7}|WBATEST0000000001' || echo "no VIN leaks"`
+Run: `git grep -nE '[A-HJ-NPR-Z0-9]{17}' -- ':(exclude)server/uv.lock' ':(exclude)docs' | grep -vE 'X{10}[A-HJ-NPR-Z0-9]{7}|WBATEST0000000001' || echo "no VIN leaks"`
 Expected: `no VIN leaks`. Any other hit must be inspected; a real VIN must be masked or removed
-(re-run `trim_fixture.py` for fixtures) before pushing.
+(re-run `trim_fixture.py` for fixtures) before pushing. `docs/` is excluded because other plans
+contain synthetic test VINs.
 
 - [ ] **Step 5: Push and open the pull request**
 

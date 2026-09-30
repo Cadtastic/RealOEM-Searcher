@@ -348,6 +348,13 @@ Order: `product` → `archive` → `series` → `body` → `model` → `market` 
   `.diag-thumb` belong to it. `diagId` = `{mg}_{internal}`. Titles repeat (two "OIL PAN": 11_3733,
   11_3834) → key on diagId. JSON-LD ItemList with `numberOfItems`.
 - Motorrad names printed twice ("Engine / Running Gear Engine / Running Gear") → dedupe "X X" → "X".
+- **Unknown main group** (`&mg=99`, checked 2026-09-30): HTTP 200, canonical keeps `&mg=99`, but the page
+  is the vehicle's **main-group page** (`.partgrp-grid` with all `.mg-thumb`s, `.vehicle-specs`) and has
+  **no `.diagThumbs`**. Detect "no such main group" as: `mg` requested, no `.diagThumbs`, `.partgrp-grid`
+  present. (Raw: `.research-raw/diagrams2/partgrp_mg99.html`.)
+- **Undated id** (`VB13-USA---E90-BMW-325i`) on showparts returned the same 20 rows as the 10/2005 id
+  (pos 10 "Up To 04/2006" present), i.e. not filtered past the production start. (Raw:
+  `.research-raw/diagrams2/showparts_undated_11_3733.html`.)
 
 ### 5.4 Parts list: `showparts?id=<vid>&diagId=<mg_nnnn>` (data identical v1/v2)
 
