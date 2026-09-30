@@ -15,8 +15,9 @@ from realoem_mcp.errors import InvalidInput, LayoutChanged, RealOemError
 from realoem_mcp.http_client import Page
 from realoem_mcp.models.common import VehicleRef
 from realoem_mcp.models.select import SelectPage
-from realoem_mcp.models.vin import VinDecodeResult
+from realoem_mcp.models.vin import ProductionStats, VinDecodeResult
 from realoem_mcp.page_types import PageType
+from realoem_mcp.parsers.production import parse_production
 from realoem_mcp.parsers.select import parse_select
 from realoem_mcp.services import Services
 from realoem_mcp.vehicle_ids import VehicleId
@@ -55,9 +56,33 @@ def normalize_vin(raw: str) -> VinInput:
     return VinInput(serial=vin[-7:], wmi=vin[:3] if len(vin) == 17 else None)
 
 
+def pick_production(
+    matches: dict[str, ProductionStats], serial: str, type_code: str
+) -> tuple[ProductionStats | None, list[str]]:
+    """The build statistics for the decoded type code, plus warnings about the other records."""
+    if not matches:
+        return None, [f"RealOEM has no production record for serial {serial}."]
+    stats = matches.get(type_code)
+    if stats is None:
+        types = ", ".join(matches)
+        if len(matches) == 1:
+            found = f"RealOEM's production record for serial {serial} is for type {types}"
+        else:
+            found = f"RealOEM's production records for serial {serial} are for types {types}"
+        return None, [f"{found}, not the decoded type {type_code}; build statistics were left out."]
+    if len(matches) > 1:
+        return stats, [
+            f"RealOEM's production records list {len(matches)} vehicles for serial {serial} "
+            f"(types {', '.join(matches)}); the decoded vehicle may not be the right one."
+        ]
+    return stats, []
+
+
 def register(app: MCPServer, services: Services) -> None:
     @app.tool()
-    async def decode_vin(vin: str, refresh: bool = False) -> VinDecodeResult:
+    async def decode_vin(
+        vin: str, include_production: bool = False, refresh: bool = False
+    ) -> VinDecodeResult:
         """Decode a BMW, MINI, Rolls-Royce or BMW Motorrad VIN with RealOEM.
 
         Use when the user gives a VIN (all 17 characters or just the last 7) and wants to know
@@ -68,16 +93,22 @@ def register(app: MCPServer, services: Services) -> None:
         ("current"/"classic"); series_name, body, engine, and steering and transmission when
         RealOEM shows them. RealOEM silently picks one vehicle per serial, so present the result
         as RealOEM's best match; confidence is "low" when a full VIN's manufacturer prefix does
-        not match the decoded brand, and warnings explain why. RealOEM has no option codes, paint
-        or upholstery for a VIN. refresh=true ignores the cache.
+        not match the decoded brand, and warnings explain why. include_production=true adds one
+        request for build statistics (build month, number within that month and within the type
+        code). RealOEM has no option codes, paint or upholstery for a VIN. refresh=true ignores
+        the cache.
         """
         try:
-            return await _decode(services, vin, refresh=refresh)
+            return await _decode(
+                services, vin, include_production=include_production, refresh=refresh
+            )
         except RealOemError as err:
             raise ToolError(err.message) from err
 
 
-async def _decode(services: Services, raw: str, *, refresh: bool) -> VinDecodeResult:
+async def _decode(
+    services: Services, raw: str, *, include_production: bool, refresh: bool
+) -> VinDecodeResult:
     vin = normalize_vin(raw)
     warnings: list[str] = []
     wmi_brand = None
@@ -114,8 +145,21 @@ async def _decode(services: Services, raw: str, *, refresh: bool) -> VinDecodeRe
             f"RealOEM matched serial {vin.serial} to a {brand.display_name} vehicle; it is "
             "probably a different vehicle with the same last 7 characters."
         )
+    pages = [page]
+    production = None
+    if include_production:
+        production_page = await services.client.fetch(
+            PageType.PRODUCTION, "production", {"vin": vin.serial}, refresh=refresh
+        )
+        pages.append(production_page)
+        with _expire_if_unparseable(services, production_page):
+            matches = parse_production(production_page.html, url=production_page.url)
+        if not matches:
+            services.cache.shorten(production_page.url, VIN_MISS_TTL)
+        production, notes = pick_production(matches, vin.serial, select.type_code)
+        warnings.extend(notes)
     return VinDecodeResult.from_pages(
-        [page],
+        pages,
         serial=vin.serial,
         status="found",
         confidence=confidence,
@@ -128,6 +172,7 @@ async def _decode(services: Services, raw: str, *, refresh: bool) -> VinDecodeRe
         engine=_label(select, "engine"),
         steering=_label(select, "steering"),
         transmission=_label(select, "trans"),
+        production=production,
     )
 
 
