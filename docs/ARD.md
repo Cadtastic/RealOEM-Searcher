@@ -672,8 +672,10 @@ class IndexMeta(BaseModel):
      call resumes from there instead of the new maximum; the stored point is cleared when an update
      completes. Otherwise (back-dated insert, removal, blank row gaining dates) → add what was found,
      `drift`, message recommends the maintainer rebuild. The tool never performs a full crawl (PRD F6.6).
-  4. If the step-1 page has no vehicles table (local index larger than RealOEM's, e.g. after removals),
-     fetch page 1 to read `remote_total` and return `drift`.
+  4. If the step-1 page is past RealOEM's end (local index larger than RealOEM's, e.g. after removals),
+     fetch page 1 to read `remote_total` and return `drift`. Past the end, RealOEM answers 200 with
+     either no vehicle rows or, as observed live, the last page's rows repeated under an inverted
+     "Showing a–b" range (a > b) (site notes §5.5).
 - Note for the skill: index vehicle ids carry the vehicle's **production start** month; parts lists are
   filtered by month, so for a specific car's build month use `select_vehicle` with `prod` or
   `decode_vin`. End dates of vehicles still in production are "as of `built_at`".
