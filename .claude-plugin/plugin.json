@@ -1,0 +1,16 @@
+{
+  "name": "realoem-searcher",
+  "version": "0.1.0",
+  "description": "Search and cross-reference BMW, MINI, Rolls-Royce and BMW Motorrad OEM part numbers on RealOEM.com",
+  "author": { "name": "Cadtastic" },
+  "homepage": "https://github.com/Cadtastic/RealOEM-Searcher",
+  "repository": "https://github.com/Cadtastic/RealOEM-Searcher",
+  "license": "MIT",
+  "mcpServers": {
+    "realoem": {
+      "command": "uv",
+      "args": ["run", "--quiet", "--directory", "${CLAUDE_PLUGIN_ROOT}/server", "realoem-mcp"],
+      "env": { "REALOEM_BRANDS_DIR": "${CLAUDE_PLUGIN_ROOT}/brands" }
+    }
+  }
+}
