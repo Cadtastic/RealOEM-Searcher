@@ -152,7 +152,7 @@ Expected: PASS. Write down the baseline: **N** passed, **D** deselected, **F** f
 formatted. This branch is cut last (PRD order F0, F1, F2, F3, F6, F4, F5), so the numbers depend
 on which branches are merged; every later full-suite expectation in this plan is a delta from
 them. For reference, when `main` has only foundation and part-lookup the baseline is
-`341 passed, 2 deselected` and `58 files already formatted`. If any test fails, stop and fix
+`344 passed, 2 deselected` and `58 files already formatted`. If any test fails, stop and fix
 `main` first.
 
 This plan adds, in total: **+45** tests (Task 1: +4 = 2 fixture tests + 2 foundation fixture-check
@@ -1313,7 +1313,7 @@ def register(app: MCPServer, services: Services) -> None:
 - [ ] **Step 4: Run tests and lint to verify they pass**
 
 Run: `uv run --directory server pytest -q`
-Expected: PASS (`N + 41` passed, `D` deselected; `382 passed, 2 deselected` when `main` has only
+Expected: PASS (`N + 41` passed, `D` deselected; `385 passed, 2 deselected` when `main` has only
 foundation and part-lookup)
 
 Run: `uv run --directory server ruff check && uv run --directory server ruff format --check`
@@ -1574,7 +1574,7 @@ uv run --directory server ruff format --check
 ```
 
 Expected: `N + 43` passed, `D + 1` deselected, `All checks passed!`, `F + 8` files already
-formatted (`384 passed, 3 deselected` and `66` when `main` has only foundation and part-lookup).
+formatted (`387 passed, 3 deselected` and `66` when `main` has only foundation and part-lookup).
 
 - [ ] **Step 2: Smoke-test the tool over stdio with the plugin's launch command**
 
