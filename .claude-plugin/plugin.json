@@ -9,7 +9,15 @@
   "mcpServers": {
     "realoem": {
       "command": "uv",
-      "args": ["run", "--quiet", "--directory", "${CLAUDE_PLUGIN_ROOT}/server", "realoem-mcp"],
+      "args": [
+        "run",
+        "--quiet",
+        "--no-dev",
+        "--frozen",
+        "--directory",
+        "${CLAUDE_PLUGIN_ROOT}/server",
+        "realoem-mcp"
+      ],
       "env": { "REALOEM_BRANDS_DIR": "${CLAUDE_PLUGIN_ROOT}/brands" }
     }
   }

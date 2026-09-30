@@ -13,8 +13,9 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import re
 import sys
-from collections.abc import Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from pathlib import Path
 
 import httpx
@@ -25,6 +26,7 @@ from realoem_mcp.page_types import PageType
 from realoem_mcp.services import create_services
 
 DEFAULT_OUT_DIR = Path(__file__).resolve().parents[2] / ".research-raw"
+_SAFE_NAME = re.compile(r"[A-Za-z0-9_-]+")
 
 
 class RecordingTransport(httpx.AsyncBaseTransport):
@@ -41,6 +43,20 @@ class RecordingTransport(httpx.AsyncBaseTransport):
 
     async def aclose(self) -> None:
         await self.inner.aclose()
+
+
+def check_name(name: str) -> str:
+    """The capture name becomes a file name, so allow only letters, digits, _ and -."""
+    if not _SAFE_NAME.fullmatch(name):
+        raise ValueError(f"name must match [A-Za-z0-9_-]+, got {name!r}")
+    return name
+
+
+def _name_arg(value: str) -> str:
+    try:
+        return check_name(value)
+    except ValueError as err:
+        raise argparse.ArgumentTypeError(str(err)) from None
 
 
 def parse_params(pairs: Sequence[str]) -> dict[str, str]:
@@ -75,10 +91,16 @@ async def capture(
     settings: Settings,
     out_dir: Path = DEFAULT_OUT_DIR,
     transport: httpx.AsyncBaseTransport | None = None,
+    clock: Callable[[], float] | None = None,
+    sleep: Callable[[float], Awaitable[None]] | None = None,
 ) -> tuple[Path, Path]:
+    check_name(name)
     recorder = RecordingTransport(transport)
-    services = create_services(settings, transport=recorder)
+    services = create_services(settings, transport=recorder, clock=clock, sleep=sleep)
     try:
+        # The client only spaces requests within one process; wait once so back-to-back runs
+        # of this script are spaced too.
+        await (sleep or asyncio.sleep)(settings.min_interval_s)
         page = await services.client.fetch(page_type, page_type.value, params, refresh=True)
     finally:
         await services.aclose()
@@ -96,7 +118,9 @@ def main(argv: list[str] | None = None) -> int:
         description="Capture one RealOEM page into .research-raw/. One page per run; do not loop."
     )
     parser.add_argument("page_type", choices=[p.value for p in PageType])
-    parser.add_argument("name", help="file name without extension, e.g. oil_filter_series")
+    parser.add_argument(
+        "name", type=_name_arg, help="file name without extension, e.g. oil_filter_series"
+    )
     parser.add_argument("params", nargs="*", help="query parameters as key=value, in send order")
     parser.add_argument("--out-dir", type=Path, default=DEFAULT_OUT_DIR)
     args = parser.parse_args(argv)

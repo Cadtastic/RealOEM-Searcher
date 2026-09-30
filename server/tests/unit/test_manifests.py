@@ -31,6 +31,8 @@ def test_mcp_server_launches_the_console_script_with_uv() -> None:
     assert server["args"] == [
         "run",
         "--quiet",
+        "--no-dev",
+        "--frozen",
         "--directory",
         "${CLAUDE_PLUGIN_ROOT}/server",
         "realoem-mcp",

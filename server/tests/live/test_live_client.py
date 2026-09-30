@@ -21,6 +21,7 @@ async def test_honest_user_agent_gets_the_v2_page(tmp_path: Path) -> None:
         page = await services.client.fetch(PageType.PARTXREF, "partxref", {"q": "11427953129"})
     finally:
         await services.aclose()
+    assert services.client.requests_made <= 5
     assert page.status == 200
     assert not page.redirected_away
     assert "11427953129" in page.html

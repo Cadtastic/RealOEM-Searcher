@@ -6,6 +6,9 @@ VIN decoding, parts diagrams, fitment checks and supersession chains. It bundles
 server (`server/`) that fetches and parses RealOEM pages on demand, plus skills that teach Claude
 how to use it.
 
+**Status:** in development — the foundation (server, cache, rate limiting) is in place; lookup
+features land in upcoming releases (see [docs/PRD.md](docs/PRD.md)).
+
 ## Install
 
 Requirement: [uv](https://docs.astral.sh/uv/getting-started/installation/) on your `PATH`. uv
@@ -58,6 +61,12 @@ Live smoke tests send a few real requests and are opt-in:
 
 ```bash
 REALOEM_LIVE=1 uv run pytest -m live tests/live
+```
+
+PowerShell:
+
+```powershell
+$env:REALOEM_LIVE = "1"; uv run --directory server pytest -m live
 ```
 
 Test fixtures are trimmed real pages. Capture a page politely, then trim it:

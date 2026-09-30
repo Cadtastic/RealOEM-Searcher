@@ -6,8 +6,8 @@ import pytest
 from realoem_mcp.config import Settings
 from realoem_mcp.errors import BotChallenge
 from realoem_mcp.page_types import PageType
-from scripts.capture_page import capture, format_headers, parse_params
-from tests.harness import BRANDS_DIR, LANDING_URL, FixtureTransport, Route, url
+from scripts.capture_page import capture, format_headers, main, parse_params
+from tests.harness import BRANDS_DIR, LANDING_URL, FakeClock, FixtureTransport, Route, url
 
 pytestmark = pytest.mark.anyio
 
@@ -42,6 +42,7 @@ async def test_capture_writes_html_and_headers(tmp_path: Path) -> None:
     target = url("partgrp", id="VB13")
     redirect = Route(redirect_to=LANDING_URL, headers={"X-RO-UI": "v2"})
     transport = FixtureTransport({target: redirect})
+    clock = FakeClock()
     html_path, headers_path = await capture(
         PageType.PARTGRP,
         "typecode_only",
@@ -49,7 +50,11 @@ async def test_capture_writes_html_and_headers(tmp_path: Path) -> None:
         settings=_settings(tmp_path),
         out_dir=tmp_path / "raw",
         transport=transport,
+        clock=clock,
+        sleep=clock.sleep,
     )
+    # One min-interval wait before the fetch (spacing across runs), one between the two hops.
+    assert clock.sleeps == [2.0, 2.0]
     assert html_path == tmp_path / "raw" / "partgrp" / "typecode_only.html"
     assert html_path.read_text(encoding="utf-8") == ""
     headers = headers_path.read_text(encoding="utf-8")
@@ -64,6 +69,7 @@ async def test_capture_refuses_challenge_pages(tmp_path: Path) -> None:
     transport = FixtureTransport(
         {target: Route("common/cloudflare_challenge.html", 403, {"cf-mitigated": "challenge"})}
     )
+    clock = FakeClock()
     with pytest.raises(BotChallenge):
         await capture(
             PageType.PARTXREF,
@@ -72,5 +78,33 @@ async def test_capture_refuses_challenge_pages(tmp_path: Path) -> None:
             settings=_settings(tmp_path),
             out_dir=tmp_path / "raw",
             transport=transport,
+            clock=clock,
+            sleep=clock.sleep,
         )
     assert not (tmp_path / "raw").exists()
+
+
+@pytest.mark.parametrize("name", ["../evil", "a/b", "a\\b", "", "x.html", "sp ace", "C:x"])
+async def test_capture_rejects_unsafe_names_before_any_request(tmp_path: Path, name: str) -> None:
+    transport = FixtureTransport({})
+    clock = FakeClock()
+    with pytest.raises(ValueError, match="name"):
+        await capture(
+            PageType.PARTXREF,
+            name,
+            {"q": "1"},
+            settings=_settings(tmp_path),
+            out_dir=tmp_path / "raw",
+            transport=transport,
+            clock=clock,
+            sleep=clock.sleep,
+        )
+    assert transport.requests == []
+    assert clock.sleeps == []
+    assert not (tmp_path / "raw").exists()
+
+
+def test_cli_rejects_unsafe_names(tmp_path: Path) -> None:
+    with pytest.raises(SystemExit) as info:
+        main(["partxref", "../evil", "q=1", "--out-dir", str(tmp_path)])
+    assert info.value.code == 2
