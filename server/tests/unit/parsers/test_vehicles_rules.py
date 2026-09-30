@@ -73,7 +73,7 @@ def test_a_page_past_the_end_is_recognised() -> None:
     assert is_past_end(EMPTY_TABLE)
     # RealOEM's real answer past its end repeats the last page's rows under "Showing 8251-8218".
     assert is_past_end(REAL_PAST_END)
-    commas = REAL_PAST_END.replace("8251–8218", "8,251–8,218")
+    commas = REAL_PAST_END.replace("8251\N{EN DASH}8218", "8,251\N{EN DASH}8,218")
     assert commas != REAL_PAST_END
     assert is_past_end(commas)
     with pytest.raises(LayoutChanged, match="18 rows but 'Showing 8251-8218'"):
