@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import sqlite3
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -12,6 +13,8 @@ from realoem_mcp.page_types import PageType
 
 SCHEMA_VERSION = "1"
 DB_FILENAME = "pages.sqlite3"
+
+logger = logging.getLogger(__name__)
 
 _CREATE_PAGES = """
 CREATE TABLE IF NOT EXISTS pages (
@@ -38,20 +41,39 @@ class PageCache:
         cache_dir = Path(cache_dir)
         cache_dir.mkdir(parents=True, exist_ok=True)
         self.path = cache_dir / DB_FILENAME
-        # Autocommit; one connection used only from the event-loop thread.
-        self._conn = sqlite3.connect(self.path, check_same_thread=False, isolation_level=None)
-        self._conn.execute("PRAGMA journal_mode=WAL")
-        self._ensure_schema()
+        try:
+            self._conn = self._open()
+        except sqlite3.DatabaseError as error:
+            logger.warning("page cache %s is unusable (%s); recreating it", self.path, error)
+            self._delete_database_files()
+            self._conn = self._open()
 
-    def _ensure_schema(self) -> None:
-        self._conn.execute(_CREATE_META)
-        row = self._conn.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()
+    def _open(self) -> sqlite3.Connection:
+        # Autocommit; one connection used only from the event-loop thread.
+        conn = sqlite3.connect(self.path, check_same_thread=False, isolation_level=None)
+        try:
+            conn.execute("PRAGMA journal_mode=WAL")
+            self._ensure_schema(conn)
+            conn.execute("DELETE FROM pages WHERE expires_at <= ?", (_iso(datetime.now(UTC)),))
+        except BaseException:
+            conn.close()
+            raise
+        return conn
+
+    def _delete_database_files(self) -> None:
+        for suffix in ("", "-wal", "-shm"):
+            Path(f"{self.path}{suffix}").unlink(missing_ok=True)
+
+    @staticmethod
+    def _ensure_schema(conn: sqlite3.Connection) -> None:
+        conn.execute(_CREATE_META)
+        row = conn.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()
         if row is not None and row[0] == SCHEMA_VERSION:
-            self._conn.execute(_CREATE_PAGES)
+            conn.execute(_CREATE_PAGES)
             return
-        self._conn.execute("DROP TABLE IF EXISTS pages")
-        self._conn.execute(_CREATE_PAGES)
-        self._conn.execute(
+        conn.execute("DROP TABLE IF EXISTS pages")
+        conn.execute(_CREATE_PAGES)
+        conn.execute(
             "INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', ?)",
             (SCHEMA_VERSION,),
         )

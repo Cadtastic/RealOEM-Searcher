@@ -127,3 +127,35 @@ def test_matching_schema_keeps_data(tmp_path: Path) -> None:
         assert reopened.get(XREF) is not None
     finally:
         reopened.close()
+
+
+def test_corrupt_database_is_replaced_with_a_warning(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    cache_dir = tmp_path / "cache"
+    cache_dir.mkdir()
+    (cache_dir / DB_FILENAME).write_bytes(b"this is definitely not a sqlite database" * 50)
+    with caplog.at_level("WARNING", logger="realoem_mcp.cache"):
+        cache = PageCache(cache_dir)
+    try:
+        assert any("corrupt" in record.getMessage().lower() for record in caplog.records)
+        assert cache.stats().entries == 0
+        cache.put(_page(XREF, PageType.PARTXREF), timedelta(days=7))
+        assert cache.get(XREF) is not None
+    finally:
+        cache.close()
+
+
+def test_expired_rows_are_purged_on_open(tmp_path: Path) -> None:
+    cache_dir = tmp_path / "cache"
+    first = PageCache(cache_dir)
+    first.put(_page(XREF, PageType.PARTXREF, age=timedelta(days=10)), timedelta(days=7))
+    first.put(_page(GRP, PageType.PARTGRP), timedelta(days=30))
+    assert first.stats().entries == 2  # expired row still physically present
+    first.close()
+    second = PageCache(cache_dir)
+    try:
+        assert second.stats().entries == 1
+        assert second.get(GRP) is not None
+    finally:
+        second.close()
