@@ -1,0 +1,10 @@
+id = "mini"
+display_name = "MINI"
+product = "P"                         # P = cars, M = motorcycles
+id_brand_segments = ["Mini"]          # vehicle-id brand segment(s)
+series_patterns = ['^R5\d$', '^R6\d$', '^F5[4-7]$', '^F60$', '^J0\d$', '^U25$']
+label_keywords = ["MINI"]             # used when classifying partxref series labels
+wmi = ["WMW", "WMZ"]
+notes = "Classic catalog (archive=1) holds R50/R52/R53."
+dedupe_repeated_names = false
+priority = 10                         # lower = checked first when matching series patterns

@@ -1,0 +1,10 @@
+id = "motorrad"
+display_name = "BMW Motorrad"
+product = "M"                         # P = cars, M = motorcycles
+id_brand_segments = ["BMW"]           # shared with bmw; resolved by series pattern / product
+series_patterns = ['^K', '^R\d', '^T\d']
+label_keywords = []
+wmi = ["WB1", "WB3"]
+notes = "Product M. No body or engine cascade levels. Diagram names are printed twice."
+dedupe_repeated_names = true          # "Engine Engine" -> "Engine"
+priority = 30                         # lower = checked first when matching series patterns
