@@ -338,7 +338,7 @@ priority = 10                         # lower = checked first when matching seri
   |---|---|---|---|---|---|---|
   | `mini` | P | `Mini` | `^R5\d$`, `^R6\d$`, `^F5[4-7]$`, `^F60$`, `^J0\d$`, `^U25$` | `MINI` | `WMW`, `WMZ` | 10 |
   | `rolls-royce` | P | `Rolls_Royce` | `^RR\d+N?$`, `^R[12]\dN$` | `Rolls-Royce`, `Phantom`, `Ghost`, `Wraith`, `Dawn`, `Cullinan`, `Spectre` | `SCA` | 20 |
-  | `motorrad` | M | `BMW` | `^K\d`, `^R\d` | — | `WB1`, `WB3` | 30 |
+  | `motorrad` | M | `BMW` | `^K`, `^R\d`, `^T\d` | — | `WB1`, `WB3` | 30 |
   | `bmw` | P | `BMW` | — (fallback) | — | `WBA`, `WBS`, `WBY`, `WBX`, `5UX`, `5UM`, `5YM`, `4US`, `3MW`, `LBV` | 100 |
 
   `motorrad` sets `dedupe_repeated_names = true`. WMI lists are best-effort (verified in the B plan).
@@ -376,7 +376,9 @@ and parts lists are filtered by the id's month. For fitment on a specific car, u
 
 ### 5.9 Parsers
 
-- Pure functions `parse_<page>(html: str, *, url: str) -> <pydantic model>`; no I/O. Fragment parsers
+- Pure functions `parse_<page>(html: str, *, url: str, ...) -> <pydantic model>`; no I/O. Parsers may
+  take extra keyword-only collaborators they need for shaping results without I/O (e.g.
+  `parse_partxref(html, *, url, brands, client)` uses the brand registry and `client.build_url`). Fragment parsers
   shared between pages take a parsed tree plus `url` (e.g. `parse_supersession(tree, *, url)`) and
   return empty results when their block is absent.
 - Built on `parsers/common.py`: `tree(html)`, `text(node)` (whitespace-collapsed), `require(tree,

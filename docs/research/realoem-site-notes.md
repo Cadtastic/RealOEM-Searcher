@@ -192,7 +192,8 @@ model become `_` and commas are kept.
 <li>K25 (R 1200 GS), R 1200 GS 04 (0307,0317), N/A, , EUR, (0307) : ...
 ```
 
-- One row per (type code × diagram); E90 example: 140 rows, 55 unique type codes. Not paginated at 140.
+- One row per (type code × diagram); E90 example: 114 rows in both captured variants (an early count of
+  140 was wrong). Not paginated.
 - Field counts vary (RR adds transmission; motorcycles have blanks and commas in names) → **parse the
   href id**, and take the text prefix before ` :` only for display.
 - No production end dates at model level.
