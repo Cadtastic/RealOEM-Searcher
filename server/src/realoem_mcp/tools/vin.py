@@ -67,8 +67,9 @@ def register(app: MCPServer, services: Services) -> None:
         production_month, series, brand, model); product ("car"/"motorcycle"); catalog
         ("current"/"classic"); series_name, body, engine, and steering and transmission when
         RealOEM shows them. RealOEM silently picks one vehicle per serial, so present the result
-        as RealOEM's best match. RealOEM has no option codes, paint or upholstery for a VIN.
-        refresh=true ignores the cache.
+        as RealOEM's best match; confidence is "low" when a full VIN's manufacturer prefix does
+        not match the decoded brand, and warnings explain why. RealOEM has no option codes, paint
+        or upholstery for a VIN. refresh=true ignores the cache.
         """
         try:
             return await _decode(services, vin, refresh=refresh)
@@ -79,6 +80,14 @@ def register(app: MCPServer, services: Services) -> None:
 async def _decode(services: Services, raw: str, *, refresh: bool) -> VinDecodeResult:
     vin = normalize_vin(raw)
     warnings: list[str] = []
+    wmi_brand = None
+    if vin.wmi is not None:
+        wmi_brand = services.brands.for_wmi(vin.wmi)
+        if wmi_brand is None:
+            warnings.append(
+                f"Unrecognized manufacturer prefix {vin.wmi}: it is not a known BMW, MINI, "
+                "Rolls-Royce or BMW Motorrad prefix."
+            )
     page = await services.client.fetch(
         PageType.SELECT, "select", {"vin": vin.serial}, refresh=refresh, ttl=VIN_HIT_TTL
     )
@@ -97,11 +106,19 @@ async def _decode(services: Services, raw: str, *, refresh: bool) -> VinDecodeRe
         catalog = _code(select, "catalog", _CATALOGS, page.url)
     vid = VehicleId.parse(select.vehicle_id, brand_segments=services.brands.brand_segments())
     brand = services.brands.for_vehicle_id(vid, product="M" if product == "motorcycle" else "P")
+    confidence = "normal"
+    if wmi_brand is not None and wmi_brand.id != brand.id:
+        confidence = "low"
+        warnings.append(
+            f"The VIN's manufacturer prefix {vin.wmi} belongs to {wmi_brand.display_name}, but "
+            f"RealOEM matched serial {vin.serial} to a {brand.display_name} vehicle; it is "
+            "probably a different vehicle with the same last 7 characters."
+        )
     return VinDecodeResult.from_pages(
         [page],
         serial=vin.serial,
         status="found",
-        confidence="normal",
+        confidence=confidence,
         warnings=warnings,
         vehicle=VehicleRef.from_id(vid, brand.id),
         product=product,
