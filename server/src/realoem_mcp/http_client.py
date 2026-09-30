@@ -136,6 +136,12 @@ class RealOemClient:
         refresh: bool = False,
         ttl: timedelta | None = None,
     ) -> Page:
+        """Return the page for `path`, from the cache or rate-limited from RealOEM.
+
+        A same-host redirect is returned as a redirected page (never cached) regardless of the
+        final status; callers turn redirected-away pages into NotFound. Other non-200 responses
+        raise UpstreamError.
+        """
         url = self.build_url(path, params)
         if not refresh and (hit := self._cache.get(url)) is not None:
             log.info("%s %s cache hit", page_type.value, url)

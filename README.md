@@ -3,8 +3,8 @@
 A Claude Code plugin that answers BMW Group parts questions (BMW, MINI, Rolls-Royce and BMW
 Motorrad) from [RealOEM.com](https://www.realoem.com/bmw/enUS/select): part-number lookups,
 VIN decoding, parts diagrams, fitment checks and supersession chains. It bundles a small local MCP
-server (`server/`) that fetches and parses RealOEM pages on demand, plus skills that teach Claude
-how to use it.
+server (`server/`) that fetches and parses RealOEM pages on demand, and will bundle skills that
+teach Claude how to use it.
 
 **Status:** in development - the foundation (server, cache, rate limiting) is in place; lookup
 features land in upcoming releases (see [docs/PRD.md](docs/PRD.md)).
@@ -26,7 +26,8 @@ In Claude Code:
 RealOEM is a free community resource with no API. This plugin treats it as a reference, not a data
 source to mirror:
 
-- At most one request in flight and at least 2 seconds between requests (never less than 1 s).
+- At most one request in flight and at least 2 seconds between requests (never less than 1 s);
+  the limit applies per server process, and each Claude Code session runs its own server.
 - Every page is cached locally (1 to 180 days by page type), so repeat questions cost nothing.
 - Requests identify themselves honestly:
   `RealOEM-Searcher/<version> (+https://github.com/Cadtastic/RealOEM-Searcher)`.

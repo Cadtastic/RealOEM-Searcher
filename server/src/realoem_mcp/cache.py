@@ -68,7 +68,11 @@ class PageCache:
         try:
             conn.execute("PRAGMA journal_mode=WAL")
             self._ensure_schema(conn)
-            conn.execute("DELETE FROM pages WHERE expires_at <= ?", (_iso(datetime.now(UTC)),))
+            try:
+                conn.execute("DELETE FROM pages WHERE expires_at <= ?", (_iso(datetime.now(UTC)),))
+            except sqlite3.OperationalError as error:
+                # Housekeeping only: get() ignores expired rows, so a busy DB must not stop startup.
+                logger.warning("skipping expired-page purge: %s", error)
         except BaseException:
             conn.close()
             raise

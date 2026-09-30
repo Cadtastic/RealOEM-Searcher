@@ -167,18 +167,14 @@ def test_locked_database_is_not_deleted(tmp_path: Path, monkeypatch: pytest.Monk
     cache_dir = tmp_path / "cache"
     PageCache(cache_dir).close()  # create a valid database
     path = cache_dir / DB_FILENAME
-    real_connect = sqlite3.connect
-    monkeypatch.setattr(
-        "realoem_mcp.cache.sqlite3.connect",
-        lambda *args, **kwargs: real_connect(*args, **{**kwargs, "timeout": 0.05}),
-    )
-    holder = real_connect(path, isolation_level=None)
-    try:
-        holder.execute("BEGIN EXCLUSIVE")
+
+    def locked(conn: sqlite3.Connection) -> None:
+        raise sqlite3.OperationalError("database is locked")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(PageCache, "_ensure_schema", staticmethod(locked))
         with pytest.raises(sqlite3.OperationalError, match="locked"):
             PageCache(cache_dir)
-    finally:
-        holder.close()
     assert path.exists()
     PageCache(cache_dir).close()  # still a usable database once the lock is released
 
@@ -197,3 +193,32 @@ def test_corrupt_database_that_cannot_be_deleted_raises_with_a_note(
     with pytest.raises(sqlite3.DatabaseError) as info:
         PageCache(cache_dir)
     assert any("could not be deleted" in note for note in info.value.__notes__)
+
+
+def test_busy_database_skips_the_expired_page_purge_with_a_warning(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    cache_dir = tmp_path / "cache"
+    seed = PageCache(cache_dir)  # valid WAL database
+    seed.put(_page(XREF, PageType.PARTXREF, age=timedelta(days=10)), timedelta(days=7))
+    seed.close()
+    real_connect = sqlite3.connect
+    monkeypatch.setattr(
+        "realoem_mcp.cache.sqlite3.connect",
+        lambda *args, **kwargs: real_connect(*args, **{**kwargs, "timeout": 0.05}),
+    )
+    # A writer holding the WAL write lock blocks only the purge; reads and schema checks still work.
+    holder = real_connect(cache_dir / DB_FILENAME, isolation_level=None)
+    try:
+        holder.execute("BEGIN IMMEDIATE")
+        with caplog.at_level("WARNING", logger="realoem_mcp.cache"):
+            cache = PageCache(cache_dir)
+    finally:
+        holder.close()
+    try:
+        warnings = [r for r in caplog.records if r.name == "realoem_mcp.cache"]
+        assert [r.levelname for r in warnings] == ["WARNING"]
+        assert "skipping expired-page purge" in warnings[0].getMessage()
+        assert cache.get(XREF) is None  # expired rows stay invisible even if not purged
+    finally:
+        cache.close()
