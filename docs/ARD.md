@@ -53,6 +53,7 @@ flowchart LR
 | AD13 | **Honest, identifying User-Agent** `RealOEM-Searcher/<version> (+https://github.com/Cadtastic/RealOEM-Searcher)` | Verified 2026-09-30 to receive HTTP 200 (only curl's default UA is challenged). Lets RealOEM identify and, if it chooses, block us; consistent with AD8 | Spoofing a desktop browser UA (evades a bot filter, contradicts AD8) |
 | AD14 | **No cookie jar**: every request sends exactly `Cookie: ro_ui=v2`; server-set cookies are discarded | Site sends `Vary: Cookie`; cached pages must not depend on hidden state (`pvin`, A/B cookies) | httpx default cookie persistence |
 | AD15 | **Tool modules are auto-discovered** (`pkgutil` over `realoem_mcp.tools`); versions are bumped only at release | Feature branches add files instead of editing shared ones, so parallel branches don't conflict | Central registration list; per-PR version bumps |
+| AD16 | **Vehicle index = committed per-brand CSV baseline + runtime SQLite store in the user data dir** (`vehicles.sqlite3`, separate from the page cache) | CSV diffs are reviewable and small in git; SQLite gives durable local additions and indexed search; keeping it out of the cache DB means `cache_clear`/schema resets never lose it; shipping the baseline means RealOEM serves the 165 index pages once, not once per user | Committed `.sqlite` (binary, bloats history); JSON (larger, not one-row-per-line); local-only build (165 requests per user); table inside the cache DB |
 
 ## 4. Repository layout
 
@@ -63,22 +64,24 @@ RealOEM-Searcher/
 │  └─ marketplace.json          # single-plugin marketplace (source ".")
 ├─ .github/workflows/ci.yml     # ruff + pytest (offline)
 ├─ brands/
-│  ├─ bmw/          brand.toml, README.md
-│  ├─ mini/         brand.toml, README.md
-│  ├─ rolls-royce/  brand.toml, README.md
-│  └─ motorrad/     brand.toml, README.md    # (+ skills/ when a brand-specific skill is needed)
+│  ├─ bmw/          brand.toml, README.md, vehicles.csv
+│  ├─ mini/         brand.toml, README.md, vehicles.csv
+│  ├─ rolls-royce/  brand.toml, README.md, vehicles.csv
+│  └─ motorrad/     brand.toml, README.md, vehicles.csv   # (+ skills/ when a brand-specific skill is needed)
 ├─ skills/
 │  ├─ part-lookup/SKILL.md       # feature A
 │  ├─ vin-decode/SKILL.md        # feature B
 │  ├─ diagram-browse/SKILL.md    # feature C
 │  ├─ fitment/SKILL.md           # feature D
-│  └─ supersession/SKILL.md      # feature E
+│  ├─ supersession/SKILL.md      # feature E
+│  └─ vehicle-index/SKILL.md     # F6
 ├─ server/
 │  ├─ pyproject.toml            # project "realoem-mcp", script realoem-mcp = realoem_mcp.server:main
 │  ├─ uv.lock
 │  ├─ scripts/
 │  │  ├─ trim_fixture.py        # raw page → trimmed fixture
-│  │  └─ capture_page.py        # polite single-page capture through RealOemClient (raw, uncommitted)
+│  │  ├─ capture_page.py        # polite single-page capture through RealOemClient (raw, uncommitted)
+│  │  └─ rebuild_vehicle_index.py  # maintainer-only full rebuild of brands/*/vehicles.csv (F6)
 │  ├─ src/realoem_mcp/
 │  │  ├─ __init__.py            # __version__
 │  │  ├─ server.py              # build_server(services) -> MCPServer; main()
@@ -90,6 +93,7 @@ RealOEM-Searcher/
 │  │  ├─ cache.py               # PageCache (SQLite)
 │  │  ├─ brands.py              # Brand, BrandRegistry
 │  │  ├─ vehicle_ids.py         # VehicleId parse/normalize
+│  │  ├─ vehicle_index.py       # VehicleIndex: CSV baseline → vehicles.sqlite3, search, add (F6)
 │  │  ├─ models/                # pydantic models: parser outputs and tool results
 │  │  │  ├─ common.py           # ResultMeta, VehicleRef, DiagramRef           (foundation)
 │  │  │  ├─ parts.py            # SupersessionEntry, SeriesUse, ModelUse, PartXref, PartLookupResult (A)
@@ -98,6 +102,7 @@ RealOEM-Searcher/
 │  │  │  ├─ catalog.py          # VehicleSpecs, MainGroup, Subgroup, DiagramThumb, Hotspot,
 │  │  │  │                      #   OptionCode, Condition, PartRow, *Result    (C)
 │  │  │  ├─ fitment.py          # FitmentResult, CompareScope, PartComparison, PartSummary, ComparisonResult (D)
+│  │  ├─ vehicles.py         # IndexedVehicle, IndexMeta, VehicleSearchResult, VehicleIndexUpdateResult (F6)
 │  │  │  └─ supersession.py     # SupersessionHop, SupersessionResult          (E)
 │  │  ├─ parsers/
 │  │  │  ├─ common.py           # selectolax helpers, dates, prices, canonical, JSON-LD (foundation)
@@ -108,7 +113,8 @@ RealOEM-Searcher/
 │  │  │  ├─ production.py       # (B)
 │  │  │  ├─ partgrp.py          # (C) main groups + diagram list
 │  │  │  ├─ showparts.py        # (C)
-│  │  │  └─ partsearch.py       # (D)
+│  │  │  ├─ partsearch.py       # (D)
+│  │  └─ vehicles.py         # (F6) vehicles index page
 │  │  └─ tools/                 # auto-discovered; each module defines register(app, services)
 │  │     ├─ admin.py            # server_status, cache_clear                   (foundation)
 │  │     ├─ parts.py            # lookup_part + fetch_part_xref()              (A)
@@ -116,6 +122,7 @@ RealOEM-Searcher/
 │  │     ├─ catalog.py          # select_vehicle, list_part_groups, list_diagrams, get_diagram_parts
 │  │     │                      #   + fetch_diagram_list(), fetch_diagram_parts() (C)
 │  │     ├─ fitment.py          # check_fitment, compare_vehicles              (D)
+│  │     ├─ vehicles.py         # find_vehicle, update_vehicle_index           (F6)
 │  │     └─ supersession.py     # trace_supersession                           (E)
 │  └─ tests/
 │     ├─ conftest.py            # fixture loader, fake transport, services factory
@@ -178,6 +185,7 @@ RealOEM-Searcher/
 | `min_interval_s` | `REALOEM_MIN_INTERVAL` | `2.0` (values < 1.0 are clamped to 1.0) |
 | `timeout_s` | `REALOEM_TIMEOUT` | `20.0` |
 | `cache_dir` | `REALOEM_CACHE_DIR` | `platformdirs.user_cache_dir("realoem-searcher")` |
+| `data_dir` | `REALOEM_DATA_DIR` | `platformdirs.user_data_dir("realoem-searcher")` (durable data: vehicle index store) |
 | `brands_dir` | `REALOEM_BRANDS_DIR` | `<repo>/brands` resolved relative to the package |
 | `user_agent` | — (not overridable) | `RealOEM-Searcher/<__version__> (+https://github.com/Cadtastic/RealOEM-Searcher)` (AD13) |
 
@@ -190,8 +198,9 @@ class Services:
     cache: PageCache
     client: RealOemClient
     brands: BrandRegistry
+    extras: dict[str, Any] = field(default_factory=dict)   # branch-owned singletons (e.g. vehicle index)
 
-    async def aclose(self) -> None: ...          # closes client (httpx) and cache (sqlite)
+    async def aclose(self) -> None: ...          # closes client (httpx), cache (sqlite), and any extra with close()
 
 def create_services(settings: Settings, *, transport: httpx.AsyncBaseTransport | None = None,
                     clock: Callable[[], float] | None = None,
@@ -227,9 +236,10 @@ invalid vehicle id.
 | `PARTXREF` | `partxref` | 7 days |
 | `PARTSEARCH` | `partsearch` | 7 days |
 | `PART` | `part` | 7 days |
+| `VEHICLES` | `vehicles` (vehicles index) | 1 day |
 
 PageType **values are the path strings** (`"select"`, `"production"`, `"partgrp"`, `"showparts"`,
-`"partxref"`, `"partsearch"`, `"part"`); `cache_clear(page_type=...)` accepts these values.
+`"partxref"`, `"partsearch"`, `"part"`, `"vehicles"`); `cache_clear(page_type=...)` accepts these values.
 `client.fetch(..., ttl=...)` may override the default. The TTL is applied when a page is **written**
 (stored as `expires_at`). A tool that parses a negative result (e.g. VIN miss) calls
 `cache.shorten(url, ttl)` to cap that entry's lifetime.
@@ -568,6 +578,89 @@ class PartRow(BaseModel):
     lists are fetched first, then diagrams in list order alternating A/B. Once the budget is spent,
     remaining diagrams are still read with `cache_only=True`; only cache misses go to `unfetched_*`.
 
+**F6: vehicle index** (`vehicle_index.py`, `parsers/vehicles.py`, `models/vehicles.py`,
+`tools/vehicles.py`, `scripts/rebuild_vehicle_index.py`, `skills/vehicle-index/`)
+
+Baseline files (committed, UTF-8, `\n`, header row, sorted by `prod_start` then `key`, empty
+`prod_start` first):
+
+- `brands/<brand>/vehicles.csv` columns: `key, vehicle_id, series_label, series_code, model_name,
+  type_code, body, market, prod_start, prod_end` (`key` = `{type}-{market}-{MM}-{YYYY}` or
+  `{type}-{market}--` for unlinked rows; `vehicle_id` empty for unlinked rows; dates `YYYY-MM` or
+  empty; `series_label` verbatim).
+- `brands/vehicles.meta.toml`: `built_at` (ISO date), `total` (remote count at build), `source =
+  "https://www.realoem.com/bmw/enUS/vehicles?sort=year"`.
+- Brand per row: `registry.for_vehicle_id(vid, product="M" if type_code.startswith("0") else "P")`;
+  unlinked rows use the model text's brand prefix (Mini → mini, Rolls-Royce → rolls-royce, else by
+  type code as above). Zinoro vehicles belong to `bmw`.
+
+Runtime store `VehicleIndex` (`{data_dir}/vehicles.sqlite3`, separate from the page cache):
+
+```python
+class VehicleIndex:
+    @classmethod
+    def open(cls, settings: Settings, brands: BrandRegistry) -> "VehicleIndex": ...
+        # creates tables; if sha256 of all brands/*/vehicles.csv + vehicles.meta.toml differs from the
+        # stored baseline hash: delete source='baseline' rows, load CSVs, delete local rows whose key is
+        # now in the baseline, store the new hash
+    def search(self, *, query=None, brand=None, series=None, year=None, market=None, type_code=None,
+               include_unlinked=False, limit=25) -> tuple[int, list[IndexedVehicle]]: ...
+    def keys(self) -> set[str]: ...
+    def count(self) -> int: ...
+    def max_prod_start(self) -> str | None: ...
+    def add_local(self, rows: Sequence[IndexedVehicle]) -> int: ...   # ignores existing keys
+    def meta(self) -> IndexMeta: ...     # built_at, baseline_total, local_rows, last_update_at
+    def close(self) -> None: ...
+```
+
+Table `vehicles(key PK, vehicle_id, brand, series_label, series_code, model_name, type_code, body,
+market, prod_start, prod_end, source CHECK(source IN ('baseline','local')), added_at)` with indexes on
+`brand`, `series_code`, `type_code`; table `meta(key PK, value)`.
+
+`tools/vehicles.py` opens the index lazily on first use and keeps it in `services.extras["vehicle_index"]`
+(foundation `Services.extras: dict[str, Any]`; `Services.aclose()` calls `close()` on extras that have
+it).
+
+- `find_vehicle(query: str | None = None, brand: str | None = None, series: str | None = None, year:
+  int | None = None, market: str | None = None, type_code: str | None = None, include_unlinked: bool =
+  False, limit: int = 25)` → `VehicleSearchResult` (**no network; exempt from `ResultMeta`**):
+  `total_matches: int, vehicles: list[IndexedVehicle], index: IndexMeta`.
+  - `query`: whitespace-separated tokens, each a case-insensitive substring of `series_label`,
+    `series_code`, `model_name` or `type_code` (all tokens must match). `year`: `prod_start` year ≤ year
+    ≤ `prod_end` year. `series`/`market`/`type_code`: case-insensitive equality. `limit` 1–100.
+  - Order: brand, series_code, model_name, market, prod_start.
+
+```python
+class IndexedVehicle(BaseModel):
+    key: str; vehicle: VehicleRef | None          # None for unlinked rows
+    brand: str; series_label: str; series_code: str | None; model_name: str
+    type_code: str; body: str | None; market: str
+    production_from: str | None; production_to: str | None   # "YYYY-MM"
+    source: Literal["baseline", "local"]
+
+class IndexMeta(BaseModel):
+    built_at: date; baseline_total: int; local_rows: int; last_update_at: datetime | None
+```
+
+- `update_vehicle_index(max_pages: int = 5)` → `VehicleIndexUpdateResult(ResultMeta)`: `status:
+  Literal["up_to_date", "updated", "partial", "drift"], added: list[IndexedVehicle], remote_total: int,
+  local_total: int, pages_fetched: int, message: str`. `max_pages` 1–10. Algorithm (always
+  `refresh=True`, `sort=year`):
+  1. Fetch page `ceil(local_total / 50)` (≥ 1); read `remote_total`. If equal to `local_total` and every
+     row key on that page is known → `up_to_date` (1 request).
+  2. Otherwise fetch from the remote last page backwards while the page's first `prod_start` ≥ the
+     index's `max_prod_start` (inclusive) and `pages_fetched < max_pages`; collect unknown keys.
+  3. If `len(new) == remote_total − local_total` → add, `updated`. If fewer found and the page limit
+     stopped the scan → add what was found, `partial`. Otherwise (back-dated insert, removal, blank row
+     gaining dates) → add what was found, `drift`, message recommends the maintainer rebuild. The tool
+     never performs a full crawl (PRD F6.6).
+- Note for the skill: index vehicle ids carry the vehicle's **production start** month; parts lists are
+  filtered by month, so for a specific car's build month use `select_vehicle` with `prod` or
+  `decode_vin`. End dates of vehicles still in production are "as of `built_at`".
+- `scripts/rebuild_vehicle_index.py` (maintainer only): fetches `sort=year` pages 1..N through
+  `RealOemClient` (normal rate limit, ~6 min), checks each page's "Showing a–b" against its rows and
+  that the total stays constant (restart otherwise), writes the four CSVs and `vehicles.meta.toml`.
+
 **E: `trace_supersession(part_number: str, max_hops: int = 5)` → `SupersessionResult(ResultMeta)`**
 (`tools/supersession.py`, `models/supersession.py`): `query, status: Literal["current", "replaced",
 "no_successor", "ambiguous", "not_found"], current_part_number: str | None, chain:
@@ -684,8 +777,9 @@ alternating A/B until done or `max_requests` network requests used → part-numb
 | 2 | `feat/part-lookup` | [part lookup](superpowers/plans/2026-09-30-part-lookup.md) | 1 |
 | 3 | `feat/vin-decode` | [VIN decode](superpowers/plans/2026-09-30-vin-decode.md) | 1 |
 | 4 | `feat/diagram-browse` | [diagram browsing](superpowers/plans/2026-09-30-diagram-browse.md) | 1, 3 (imports `parsers/select.py` and `models/select.py`) |
-| 5 | `feat/fitment` | [fitment](superpowers/plans/2026-09-30-fitment.md) | 2 (part-number helpers, supersession parser), 4 (diagram fetch helpers) |
-| 6 | `feat/supersession` | [supersession](superpowers/plans/2026-09-30-supersession.md) | 2 |
+| 5 | `feat/vehicle-index` | [vehicle index](superpowers/plans/2026-09-30-vehicle-index.md) | 1 (updates the diagram-browse skill from 4) |
+| 6 | `feat/fitment` | [fitment](superpowers/plans/2026-09-30-fitment.md) | 2 (part-number helpers, supersession parser), 4 (diagram fetch helpers) |
+| 7 | `feat/supersession` | [supersession](superpowers/plans/2026-09-30-supersession.md) | 2 |
 
 Each branch is cut from an up-to-date `main` after its dependencies merge, and lands via its own PR with
 green CI. Because tool modules are auto-discovered, brand data accepts extra keys, versions are bumped only at

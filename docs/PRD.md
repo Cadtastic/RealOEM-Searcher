@@ -42,7 +42,9 @@ reported as shown by RealOEM (always USD).
 ### 4.2 Out of scope
 
 - Other brands or other parts-catalog websites.
-- Bulk crawling, catalog mirroring, offline database builds, or any use of RealOEM data for AI training.
+- Bulk crawling, catalog mirroring, offline parts databases, or any use of RealOEM data for AI training.
+  (The one exception is the vehicle list in F6: ~165 index pages, fetched once by the maintainer and
+  committed, so users don't each fetch it; updates are incremental.)
 - Bypassing Cloudflare or other bot protections (no headless-browser challenge solving).
 - Per-VIN factory option (SA) codes, paint, upholstery or model year. RealOEM does not expose them.
 - Ordering, price comparison across vendors, or affiliate links.
@@ -51,8 +53,8 @@ reported as shown by RealOEM (always USD).
 
 ## 5. Features
 
-Each feature ships on its own branch and pull request, in this order. `feat/foundation` is a
-prerequisite for all of them.
+Each feature ships on its own branch and pull request, in this order: F0, F1, F2, F3, F6, F4, F5.
+`feat/foundation` is a prerequisite for all of them.
 
 ### F0: Foundation (`feat/foundation`)
 
@@ -119,6 +121,25 @@ registry, fixture tooling, CI.
   the diagrams that were skipped.
 - F4.3 "Which vehicles use part X" is answered via F1.
 
+### F6: Vehicle index (`feat/vehicle-index`)
+
+A local index of every vehicle in RealOEM's catalog, so vehicles can be found by name, series, year or
+type code without walking the model cascade.
+
+- F6.1 A committed baseline `brands/<brand>/vehicles.csv` (one vehicle per line) covering RealOEM's
+  vehicles index (~8,200 vehicles), built by a maintainer-only script.
+- F6.2 At runtime the baseline is loaded into a SQLite store in the user's data directory (not the
+  cache directory); rows added by updates are kept there and survive restarts, cache clears and plugin
+  updates. When the baseline changes, baseline rows are reloaded and still-missing local rows are kept.
+- F6.3 `find_vehicle` searches the local index (free text over series, model and type code, plus
+  filters for brand, series, year, market and type code) and returns vehicle ids usable by F3/F4. It
+  makes no network requests.
+- F6.4 `update_vehicle_index` checks RealOEM for vehicles added since the index was built, using as few
+  requests as possible (one request when nothing is new), bounded by a page limit.
+- F6.5 Skill: when a requested vehicle isn't found, or the user asks, update the index and search
+  again; explain that end dates of vehicles still in production may be out of date.
+- F6.6 A full rebuild (all index pages) is only ever run by the maintainer script, never by a tool.
+
 ### F5: Supersession chain (`feat/supersession`) — feature E
 
 - F5.1 Given a part number, follow "superseded by" links to the current part and return the chain with
@@ -148,6 +169,7 @@ registry, fixture tooling, CI.
   2. "Is 11427541827 current?" (F1 → F5, expected: replaced by 11427953129)
   3. "Does 11427953129 fit an E90 325i USA 10/2005?" (F4)
   4. "Compare the engine lubrication diagrams of an E90 325i and an E92 335i." (F4)
+  5. "Find a 2019 R 1250 GS" returns vehicle ids with no network requests. (F6)
 - No RealOEM request is made twice within its TTL during the smoke session.
 
 ## 8. Risks

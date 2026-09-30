@@ -37,7 +37,8 @@ Catalog snapshot at time of research: "Catalog: 03/2025" (`span.catalog-version`
   stricter rules later → throttle, cache, detect challenges, never attempt to bypass them.
 - `robots.txt`: `User-agent: *` → `Content-Signal: search=yes,ai-train=no,use=reference`, `Allow: /`;
   explicitly disallows `ClaudeBot`, `GPTBot`, `CCBot`, etc. Our use: user-initiated reference lookups
-  only, no crawling, no bulk mirroring, no training.
+  only, no crawling, no bulk mirroring, no training. Single approved exception: the vehicle list
+  (§5.5), fetched once by the maintainer and committed so users don't each fetch it.
 - Asset versions changed (`?40` → `?42`) mid-session: live deploys; markup can drift.
 
 ### 1.3 UI A/B variants (`ro_ui` cookie)
@@ -369,11 +370,38 @@ Order: `product` → `archive` → `series` → `body` → `model` → `market` 
 - Motorrad: German supplements (`SILBER`) even under enUS; fewer prices.
 - Other: `nav.breadcrumb-nav`, JSON-LD `BreadcrumbList`/`ImageObject`, `section.see-also`.
 
-### 5.5 Vehicles index
+### 5.5 Vehicles index (feature F6)
 
-`/bmw/enUS/vehicles`: 8218 vehicles, 165 pages of 50 (`?page=N`, `?sort=year|type`, `?series=` family).
-`table#vi-table` rows: series, model link (partgrp id with start month), type, body, prod range, market.
-Not used (would require 165 requests).
+Researched 2026-09-30 (15 requests, honest UA; raw pages in `.research-raw/vehicles/`).
+
+- `/bmw/enUS/vehicles`: 8218 vehicles, 165 pages of 50. Params: `page=N`, `sort=year|type` (default =
+  curated series order), `series=<family>` (1'–8', M, X, Z, i, C, F, G, K, R; overlapping UI shortcuts,
+  not a partition — Isetta/700/Veteranen are in none). Params combine (`?series=K&sort=year`).
+- Rows: `table#vi-table > tbody > tr.r0|tr.r1`, 50 per page, 6 cells `td.vi-col-{series|model|type|body|prod|market}`.
+  - series: display label (`3 Series F30`, `MINI Clubman R55 LCI`, `Phantom RR11 LCI`, `R 24         -50`
+    — keep verbatim, collapse whitespace for display).
+  - model: `a[href^="/bmw/enUS/partgrp?id="]`, text `{Brand}&nbsp;{Model}` (Brand ∈ BMW, Mini,
+    Rolls-Royce, Zinoro). Href id is unencoded and may contain `ã`, `,`, `'`.
+  - type, body (`N/A` for motorcycles and A-codes), prod `MM/YYYY&ndash;MM/YYYY` or empty, market.
+  - Link id's `MM-YYYY` = prod start; its type/market = the cells; 5th field = series code.
+  - **51 rows have no link**, and exactly those rows have an empty prod cell (market variants, some
+    Motorsport, A-codes).
+  - No open-ended ranges: current vehicles end near the catalog date (latest end 04/2025 vs catalog
+    03/2025), so end dates are likely rewritten each catalog release.
+- Motorcycles: type code starts with `0` (all such rows have body `N/A`). A-codes (`9xxx`, `9Xxx`) are
+  unclassified (treated as BMW).
+- Total count: second `<strong>` in `#vi-result-bar > span:first-child` ("Showing 8201–8218 of 8218
+  vehicles"). Last page link `#vi-pagination a[title="Last page"]`; absent on the last page
+  (`span.vi-pg-current`); no `#vi-pagination` when one page suffices.
+- **`sort=year` = ascending production start**, the 51 blank-start rows first (page 1 + first row of
+  page 2), latest start (03/2025) on page 165. Ties: model name, then market, then type (best guess).
+  **No descending option** (`dir=desc`, `order=desc`, `sort=-year` ignored).
+- New vehicles with recent starts land on the last page(s) of `sort=year`. Not detectable by tail-only
+  scans: back-dated inserts, blank rows gaining dates, end-date changes.
+- Row key: `{type}-{market}-{MM}-{YYYY}` (unlinked: `{type}-{market}--`); unique in sample.
+- Headers: `Cache-Control: no-cache, no-store`; ~12–13 KB per page with compression.
+- **Policy:** building the committed baseline (165 pages, once, by the maintainer script) was explicitly
+  approved by the project owner on 2026-09-30 (PRD F6); runtime updates are incremental only.
 
 ### 5.6 Request counts
 
