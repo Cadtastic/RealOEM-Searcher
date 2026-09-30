@@ -8,10 +8,12 @@ from urllib.parse import parse_qsl, urlsplit
 from realoem_mcp.brands import BrandRegistry
 from realoem_mcp.errors import LayoutChanged
 from realoem_mcp.http_client import RealOemClient
+from realoem_mcp.models.common import DiagramRef, VehicleRef
 from realoem_mcp.models.parts import ModelUse, PartXref, SeriesUse, SupersessionEntry
 from realoem_mcp.page_types import PageType
 from realoem_mcp.parsers.common import Node, parse_my, require, text, tree
 from realoem_mcp.parsers.supersession import checked_mdy, parse_supersession
+from realoem_mcp.vehicle_ids import VehicleId
 
 PAGE = PageType.PARTXREF
 _HEADING = re.compile(r"(?P<number>\d+)(?:\s*-\s*(?P<description>.+))?")
@@ -116,6 +118,8 @@ def _uses(
         params = dict(parse_qsl(urlsplit(href).query))
         if target == "partxref" and params.get("series"):
             series.append(_series_use(link, params["series"], url, brands))
+        elif target == "showparts" and params.get("id") and params.get("diagId"):
+            models.append(_model_use(item, link, params, brands, client))
         else:
             raise LayoutChanged(PAGE, f"unexpected vehicle link {href!r}", url)
     if not series and not models and "was found on the following" in text(results):
@@ -135,6 +139,45 @@ def _series_use(link: Node, code: str, url: str, brands: BrandRegistry) -> Serie
         production_from=_month(match["start"], url),
         production_to=_month(match["end"], url),
     )
+
+
+_ID_SEPARATORS = re.compile(r"[ ()]+")  # how RealOEM turns model names into id segments
+
+
+def _model_use(
+    item: Node, link: Node, params: dict[str, str], brands: BrandRegistry, client: RealOemClient
+) -> ModelUse:
+    vid = VehicleId.parse(params["id"], brand_segments=brands.brand_segments())
+    product = "M" if vid.type_code.startswith("0") else "P"  # motorcycle type codes start with 0
+    brand = brands.for_vehicle_id(vid, product=product).id
+    body, engine = _body_engine(text(item).partition(" : ")[0], vid)
+    return ModelUse(
+        vehicle=VehicleRef.from_id(vid, brand),
+        body=body,
+        engine=engine,
+        diagram=DiagramRef.build(client, vid.raw, params["diagId"], text(link)),
+    )
+
+
+def _body_engine(label: str, vid: VehicleId) -> tuple[str | None, str | None]:
+    """Body and engine from "3 Series E90, 325i, Sedan, N52, USA, (VB13)".
+
+    Field counts vary (Rolls-Royce adds a transmission, series and model names can contain
+    commas), so the model is located by comparing with the id's model segment and the two
+    fields after it are body and engine. Blank and "N/A" become None.
+    """
+    fields = label.split(", ")
+    for start in range(len(fields)):
+        for end in range(start + 1, len(fields) + 1):
+            if _ID_SEPARATORS.sub("_", ", ".join(fields[start:end])) == vid.model:
+                body, engine = [*fields[end : end + 2], "", ""][:2]
+                return _value(body), _value(engine)
+    return None, None
+
+
+def _value(field: str) -> str | None:
+    field = field.strip()
+    return None if field in ("", "N/A") else field
 
 
 def _month(value: str, url: str) -> str | None:
