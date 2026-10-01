@@ -91,7 +91,10 @@ classes.
 
 ### 4.2 `http_app.py` and the `realoem-mcp-http` entry point
 
-- `build_http_app(settings) -> Starlette`: creates the `AuthStore`, `Quota`, `FetchGate`,
+- `build_http_app(settings) -> Starlette` raises unless `settings.mode == "http"` and runs the
+  HTTP-only validation itself (so a uvicorn app-factory launch or a test with default settings can
+  never build an HTTP app in stdio mode); `main()` only sets the mode and calls it. It creates the
+  `AuthStore`, `Quota`, `FetchGate`,
   `GitHubLogin` and `RealOemAuthProvider`; the client hooks are no-argument closures that resolve
   the caller: `admit = lambda: gate.admit(require_user(settings).subject)` and `charge = lambda:
   quota.charge(require_user(settings).subject)`; `services = create_services(settings, admit=admit,
@@ -280,10 +283,13 @@ in-flight sign-in; users reconnect.
   Reason: a shared entry's `from_cache`/`fetched_at` would reveal whether and when someone else
   decoded a VIN.
 - **Cache size accounting:** each row stores `size_bytes INTEGER NOT NULL` (UTF-8 length, set in
-  `put`), declared **before** `html` so reading it never walks the page's overflow chain, and a
-  running total in `meta` is updated in the same transaction as `put`, eviction, `clear` and the
-  expired-row purge. The cap check and `stats()` read that total, so both are constant-time and
-  never read `html` (today's `stats()` sums `LENGTH(CAST(html AS BLOB))`, a full scan).
+  `put`), and a running total in `meta` is updated in the same transaction as `put`, eviction,
+  `clear` and the expired-row purge. The cap check and `stats()` read that total, so both are
+  constant-time and never read `html` (today's `stats()` sums `LENGTH(CAST(html AS BLOB))`, a full
+  scan). **`html` is the last column**: `owner`, `url`, `page_type`, `final_url`, `status`,
+  `fetched_at`, `expires_at`, `last_used` (INTEGER epoch seconds, so the per-hit update overwrites
+  in place) and `size_bytes` precede it, with indexes on `(last_used)` and `(expires_at)`, so
+  eviction and the purge never walk a page's overflow chain either.
 - **Cache size cap** (`cache_max_mb`): checked after each `put` against the running total; when
   over, least-recently-used rows (a `last_used` column, updated on hit) are evicted until 10 %
   under the cap. The cache database is created with `PRAGMA auto_vacuum=INCREMENTAL` (it can only
@@ -449,9 +455,12 @@ test dependency):
   `up_to_date`/`updated`, `partial` resumes; the `refresh=true` 1-hour throttle.
 - **Cache:** owner column (`get`/`put`/`cached`/`shorten` with owner; `Page.owner` round-trips),
   owner-scoped 30-day expiry, LRU eviction under the cap, `last_used` updated on hit, the running
-  size total stays equal to `SUM(size_bytes)` after put/evict/clear/purge, `stats()` and the cap
-  check never read `html` (asserted with a trace callback), `incremental_vacuum` after eviction,
-  the free-space floor (injected `disk_usage`), cache files deleted on `FULL` from another store.
+  size total stays equal to `SUM(size_bytes)` after put/evict/clear/purge; `stats()`, the cap
+  check, eviction and the purge never read `html` (asserted with a trace callback);
+  `incremental_vacuum` after eviction; the free-space floor (injected `disk_usage`); on `FULL`
+  from another store the cache connection is closed before the files are unlinked, then reopened
+  empty.
+- **Mode guard:** `build_http_app(Settings())` raises; it also rejects missing HTTP-only settings.
 - **Registration limits:** a 9 KB `/register` body → `413`; a 513-character loopback redirect URI
   and a `jwks` field are rejected or dropped.
 - **Mode and settings:** HTTP mode with no token fails closed (`cache_clear`, VIN keying, refresh
