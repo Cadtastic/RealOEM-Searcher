@@ -73,10 +73,12 @@ classes.
 
 ### 4.1 Mode and request context (`current_user.py`)
 
-- `Settings.mode: Literal["stdio", "http"]` is set by the entry point (`realoem-mcp` → `stdio`,
-  `realoem-mcp-http` → `http`), never inferred. Every behaviour that differs between modes checks
-  this flag, so an HTTP code path without a token fails closed rather than falling back to stdio
-  behaviour.
+- `Settings.mode: Literal["stdio", "http"]`, default `"stdio"` (so tests and the maintainer scripts
+  that construct `Settings(...)` directly keep working), set to `"http"` only by the
+  `realoem-mcp-http` entry point, never inferred. HTTP-only validation (public URL, GitHub
+  credentials, secret key) runs only in that entry point. Every behaviour that differs between modes
+  checks this flag, so an HTTP code path without a token fails closed rather than falling back to
+  stdio behaviour.
 - `CurrentUser(subject: str, is_admin: bool)`; `current_user(settings) -> CurrentUser | None` reads
   the SDK's `get_access_token()` (set per request by the SDK's bearer middleware; in stateless mode
   each request runs in its own task with its own context) and checks `subject` against
@@ -90,8 +92,10 @@ classes.
 ### 4.2 `http_app.py` and the `realoem-mcp-http` entry point
 
 - `build_http_app(settings) -> Starlette`: creates the `AuthStore`, `Quota`, `FetchGate`,
-  `GitHubLogin` and `RealOemAuthProvider`; `services = create_services(settings, admit=gate.admit,
-  charge=quota.charge)`; `server = build_server(services, auth_server_provider=provider,
+  `GitHubLogin` and `RealOemAuthProvider`; the client hooks are no-argument closures that resolve
+  the caller: `admit = lambda: gate.admit(require_user(settings).subject)` and `charge = lambda:
+  quota.charge(require_user(settings).subject)`; `services = create_services(settings, admit=admit,
+  charge=charge)`; `server = build_server(services, auth_server_provider=provider,
   auth=auth_settings, middleware=[CallClock()])`; custom routes via `server.custom_route` **before**
   `app = server.streamable_http_app(stateless_http=True, json_response=True,
   transport_security=...)`, so the SDK's app stays the root and its lifespan (session manager)
@@ -126,10 +130,10 @@ safe only because registration admits nothing but Claude's callbacks.
 
 | Method | Behaviour |
 |---|---|
-| `register_client` | Parses every `redirect_uris` entry with `urllib.parse`. Accepts exactly the URLs in `settings.redirect_allowlist` (default `https://claude.ai/api/mcp/auth_callback`; string match) and loopback URIs: scheme `http`, host exactly `localhost` or `127.0.0.1`, no userinfo, no fragment, any port. Anything else, more than 5 redirect URIs, or `client_name` over 200 characters → `RegistrationError("invalid_redirect_uri" / "invalid_client_metadata")` (the SDK's four RFC 7591 codes are the only ones it can return, always as `400`). Persists the client with `created_at`; rate limits live in middleware (4.9). |
+| `register_client` | Parses every `redirect_uris` entry with `urllib.parse`. Accepts exactly the URLs in `settings.redirect_allowlist` (default `https://claude.ai/api/mcp/auth_callback`; string match) and loopback URIs: scheme `http`, host exactly `localhost` or `127.0.0.1`, no userinfo, no fragment, any port, at most 512 characters. Anything else, more than 5 redirect URIs, or `client_name` over 200 characters → `RegistrationError("invalid_redirect_uri" / "invalid_client_metadata")` (the SDK's four RFC 7591 codes are the only ones it can return, always as `400`). Persists only `client_id`, the secret, `client_name`, `redirect_uris`, `grant_types`, `response_types`, `token_endpoint_auth_method`, `scope` and `created_at`; every other metadata field (`jwks`, `jwks_uri`, `contacts`, …) is dropped. Body size and rate limits live in middleware (4.9). |
 | `get_client` | Returns a `ClaudeClient(OAuthClientInformationFull)` whose `validate_redirect_uri` matches loopback URIs on scheme, host, path and query while ignoring the port, and returns the requested URI (with its port) so the SDK's `/token` equality check passes; everything else is an exact string match. |
 | `authorize` | Rejects `state` over 512 characters, a `code_challenge` that is not 43 base64url characters, and `resource` or `scope` over 256 characters with `AuthorizeError("invalid_request")`. Validates `resource`: absent → `<public URL>/mcp`; present and not equal to it (URL comparison: scheme and host case-insensitive, trailing slash ignored) → `AuthorizeError("invalid_target")`. `scopes` `None` → `["realoem"]`. Stores a pending request `{id (256-bit random), client_id, redirect_uri, client_state, code_challenge, resource, scopes, status="awaiting_consent", expires_at=now+10 min}` and returns `https://<host>/consent?req=<id>`. **Never contacts GitHub.** |
-| `consent(req_id, decision)` | `allow`: `UPDATE pending SET status='consented', gh_state_hash=? WHERE id=? AND status='awaiting_consent'` (0 rows → `ExpiredRequest`), where the GitHub `state` is 256-bit random and `gh_state_hash = H_github(state)`. The PKCE verifier is **never stored**: `verifier = base64url(HMAC-SHA256(k_github_pkce, req_id + "\|" + state))` (43 characters), recomputed at the callback. Returns `StartGitHub(authorization_url, state)`. `deny`: `UPDATE … SET status='denied' WHERE id=? AND status='awaiting_consent'` (0 rows → `ExpiredRequest`); returns `RedirectToClient(redirect_uri, error="access_denied", state=client_state)`. |
+| `consent(req_id, decision)` | `allow`: `UPDATE pending SET status='consented', gh_state_hash=? WHERE id=? AND status='awaiting_consent' AND expires_at > now` (0 rows → `ExpiredRequest`), where the GitHub `state` is 256-bit random and `gh_state_hash = H_github(state)`. The PKCE verifier is **never stored**: `verifier = base64url(HMAC-SHA256(k_github_pkce, req_id + "\|" + state))` (43 characters), recomputed at the callback. Returns `StartGitHub(authorization_url, state)`. `deny`: `UPDATE … SET status='denied' WHERE id=? AND status='awaiting_consent'` (0 rows → `ExpiredRequest`); returns `RedirectToClient(redirect_uri, error="access_denied", state=client_state)`. |
 | `github_return(query, state_cookie)` | GitHub's callback carries only `code` and `state`. Requires `state_cookie == query.state` (constant-time); finds the row by `gh_state_hash = H_github(query.state)`; then `UPDATE pending SET status='github_returned', gh_state_hash=NULL WHERE id=? AND status='consented' AND gh_state_hash=? AND expires_at > now` — 0 rows → `ShowError("expired")`, **no redirect**. If the query carries `error=access_denied` (user cancelled at GitHub) → `RedirectToClient(error="access_denied")`. Exchanges the code with the recomputed verifier, reads `id`, `login`, `created_at`. Banned → `ShowError("banned")`. GitHub unreachable → `ShowError("github_unavailable")`. Otherwise upserts the user, writes the consent audit row, issues a one-time authorization code bound to the pending request (`client_id`, `redirect_uri`, `code_challenge`, `resource`, `scopes`, subject, 10-minute expiry) and returns `RedirectToClient(redirect_uri, code=…, state=client_state)`. |
 | `load_authorization_code` | Lookup by `H_code`. A used or expired code returns `None` **and** revokes the token family issued from it (OAuth 2.1 §4.1.3). |
 | `exchange_authorization_code` | In one transaction: `UPDATE authorization_codes SET used_at=? WHERE hash=? AND used_at IS NULL`; 0 rows → revoke the family and raise `TokenError("invalid_grant")`; else create a new family (at most 20 active families per subject; the oldest is revoked first) and insert the access token (`kind='access'`, 1 h) and refresh token (`kind='refresh'`, idle 30 days, family absolute expiry 90 days) with the code's `resource` and scopes. Used codes are kept until `expires_at`. |
@@ -205,10 +209,13 @@ stored, logged or passed through.
 - `admit()`: an async context manager entered **before** waiting for the lock. It refuses
   immediately when the user is already at the day's limit, enforces at most 4 waiting-or-in-flight
   cache-miss fetches per subject and 20 overall, and computes the remaining wait as
-  `min(60 s, deadline − now)`; its exit releases the counters. The lock is then acquired with
-  `asyncio.wait_for(self._lock.acquire(), remaining)`; a timeout raises `Busy(RealOemError)`
-  ("RealOEM Searcher is busy; try again in a minute") and charges nothing. The deadline check
-  applies to every wait, including the single-flight wait of `update_vehicle_index`.
+  `min(60 s, deadline − now)`; its exit releases the counters. The lock is then acquired inside
+  `async with asyncio.timeout(remaining): await self._lock.acquire()` with a `try/finally` release
+  (not `asyncio.wait_for`, which can leak the lock on Python 3.11 when the task is cancelled as the
+  acquire completes). A timeout raises `CallDeadline` when the deadline was the binding limit, else
+  `Busy(RealOemError)` ("RealOEM Searcher is busy; try again in a minute"); either way nothing is
+  charged. The deadline check applies to every wait, including the single-flight wait of
+  `update_vehicle_index`.
 - `charge()`: called **inside** the lock, after the second cache check misses and before the
   network request. `Quota.charge(subject)` runs one transaction: the user's row
   (`UPDATE usage SET requests = requests + 1 WHERE subject=? AND day=? AND requests < ?`, after
@@ -225,10 +232,11 @@ stored, logged or passed through.
   daily request limit; try again after 00:00 UTC."
 - **Per-call deadline** (`REALOEM_CALL_DEADLINE_S`, 50, measured from `call_started_at`): once
   exceeded, `admit()` raises `CallDeadline(RealOemError)` instead of waiting. `compare_vehicles`
-  (`tools/fitment.py`) treats `CallDeadline` like an exhausted request budget: it switches to
-  cache-only reads and returns `complete=false` (resumable). Every other tool reports it as a tool
-  error: "This call took too long; call again to continue (pages already fetched are cached)."
-  PRD NFR5 (< 5 s uncached) holds per request when the queue is empty.
+  (`tools/fitment.py`) treats `CallDeadline` **and** `Busy` like an exhausted request budget: it
+  switches to cache-only reads and returns `complete=false` (resumable), never losing the pages it
+  already compared. Every other tool reports them as tool errors: "This call took too long; call
+  again to continue (pages already fetched are cached)." / the busy message. PRD NFR5 (< 5 s
+  uncached) holds per request when the queue is empty.
 - `server_status` reports the caller's `quota: {used_today, limit, resets_at}` and `global_limit`
   when on.
 
@@ -264,23 +272,36 @@ in-flight sign-in; users reconnect.
   `vehicle-index` skill gain the status). Its requests count against the caller who triggered it.
 - **VIN pages are not shared:** `PageCache` gains an `owner` column with primary key
   `(owner, url)`: `''` for shared pages, `H_cache_owner(subject)` for `select?vin=` and
-  `production?vin=` in HTTP mode. `get`, `put`, `cached` and `shorten` take the owner; `Page.url`
-  stays the RealOEM URL, so `source_urls`, `redirected_away` and `shorten` are unaffected. Owner-
-  scoped entries expire after 30 days (the shared VIN TTL of 180 days does not apply). Reason: a
-  shared entry's `from_cache`/`fetched_at` would reveal whether and when someone else decoded a VIN.
-- **Cache size cap** (`cache_max_mb`): the cap applies to the logical size `SUM(LENGTH(html))`
-  (as `stats()` already reports), checked after each `put`; when over, least-recently-used rows
-  (a `last_used` column, updated on hit) are evicted until 10 % under the cap. No scheduled
-  `VACUUM`: SQLite reuses freed pages, so the file levels off near the cap, and a `VACUUM` of a
-  400 MB database would need that much free space again on a 1 GB volume while freezing the event
-  loop. `PRAGMA journal_size_limit=67108864` on all three databases. 400 MB is at most 40 % of the
-  volume.
+  `production?vin=` in HTTP mode. `get`, `put`, `cached` and `shorten` take the owner. `Page` gains
+  `owner`, set by the client, and the three `shorten` calls in `tools/vin.py` become
+  `services.cache.shorten(page.owner, page.url, ttl)`. `Page.url` stays the RealOEM URL, so
+  `source_urls` and `redirected_away` are unaffected. Owner-scoped entries expire after 30 days (the
+  shared VIN TTL of 180 days does not apply in HTTP mode; ARD §5.4 and PRD NFR2 record this).
+  Reason: a shared entry's `from_cache`/`fetched_at` would reveal whether and when someone else
+  decoded a VIN.
+- **Cache size accounting:** each row stores `size_bytes INTEGER NOT NULL` (UTF-8 length, set in
+  `put`), declared **before** `html` so reading it never walks the page's overflow chain, and a
+  running total in `meta` is updated in the same transaction as `put`, eviction, `clear` and the
+  expired-row purge. The cap check and `stats()` read that total, so both are constant-time and
+  never read `html` (today's `stats()` sums `LENGTH(CAST(html AS BLOB))`, a full scan).
+- **Cache size cap** (`cache_max_mb`): checked after each `put` against the running total; when
+  over, least-recently-used rows (a `last_used` column, updated on hit) are evicted until 10 %
+  under the cap. The cache database is created with `PRAGMA auto_vacuum=INCREMENTAL` (it can only
+  be set before the first table exists, so the owner-column schema change deletes and recreates the
+  cache files, which are disposable) and `PRAGMA incremental_vacuum` runs after every eviction,
+  returning freed pages to the filesystem without the extra space a full `VACUUM` needs. No
+  scheduled `VACUUM`. `PRAGMA journal_size_limit=67108864` on all three databases. 400 MB is at
+  most 40 % of the volume.
+- **Free-space floor:** before each `put`, `shutil.disk_usage(cache_dir)` is checked; below 100 MB
+  free the cache evicts to half the cap first, and if still below the floor the page is served
+  without being cached.
 - `scripts/admin.py` (run via `fly ssh console` as the app user, not root, so SQLite's WAL files
   never become root-owned): `usage [--day]`, `ban <id> --reason`, `unban <id>`, `revoke <id>`,
   `prune`.
 
 ### 4.9 Rate limits, purging, retention
 
+- ASGI middleware rejects `/register` bodies over 8 KB with `413` (the SDK alone accepts 4 MiB).
 - ASGI middleware keyed on `Fly-Client-IP` (set by Fly's proxy; the socket peer is the proxy):
   `/register` 30 per hour per address outside `hosted_client_range` and 600 per hour across that
   range (hosted Claude registers a new client per connection), with a global ceiling of 2,000 a
@@ -318,11 +339,13 @@ in-flight sign-in; users reconnect.
   ruleset protects `v*` tags.
 - A second GitHub OAuth App ("RealOEM Searcher (dev)", callback on `http://localhost:8080`) is used
   for local container runs, since a GitHub OAuth App takes one callback URL.
-- Fatal errors: `SQLITE_FULL` from any store triggers an emergency cache eviction to half the cap
-  and one retry; `CORRUPT` or `IOERR` from the auth store, or a second `FULL`, are logged and the
-  process ends with `os._exit(1)` after flushing logs (a `SystemExit` raised inside a request
-  handler may be swallowed), so Fly's `on-failure` policy restarts it; `/healthz` never heals
-  anything by itself.
+- Fatal errors: `SQLITE_FULL` from the auth or vehicle store deletes the page-cache files (they are
+  disposable, and deleting them is the one action that frees filesystem space without needing
+  any) and retries once; `CORRUPT` or `IOERR` from the auth store, or a second `FULL`, are logged
+  and the process ends with `os._exit(1)` after flushing logs (a `SystemExit` raised inside a
+  request handler may be swallowed), so Fly's `on-failure` policy restarts it; `/healthz` never
+  heals anything by itself. After `retries = 10` a crash loop leaves the machine stopped, so plan
+  2 adds an external uptime check on `/healthz` that alerts the owner.
 - Backups: Fly's daily volume snapshots (5-day retention) are relied on; an off-platform backup job
   is out of scope for 0.2.0 (the vehicle index rebuilds from the committed baseline, the cache is
   disposable, and losing `auth.sqlite3` means users reconnect, bans are lost and the day's quotas
@@ -379,7 +402,8 @@ in-flight sign-in; users reconnect.
 | Bad registration | `400 invalid_redirect_uri` / `invalid_client_metadata` (provider); `429` (middleware) | Client-only |
 | Consent form without its cookie, stale, or replayed; callback with missing or mismatched state | Error page, never a redirect | "This sign-in request has expired. Start again from Claude." |
 | Restart (deploy, migration, secret change) | Seconds of failed connections; nothing lost (no sessions; tokens and cache on disk) | Claude retries |
-| Disk full | Emergency cache eviction and retry; a second failure exits 1 | Brief outage at worst |
+| Disk nearly full | Free-space floor: evict, then serve pages uncached | None (slower repeat questions) |
+| Disk full | Page-cache files deleted and one retry; a second failure exits 1 | Brief outage; a persistent crash loop stops the machine and triggers the uptime alert |
 | Fatal auth-store error | Process exits 1 → Fly restarts it | Brief outage |
 
 Logs carry `github:<id>`, tool name, page type and outcome; see 4.9 for what they never carry.
@@ -419,8 +443,13 @@ test dependency):
   `Busy`, nothing charged; `CallDeadline` makes `compare_vehicles` partial and resumable and is a
   tool error for `trace_supersession`; `update_vehicle_index` single-flight, cooldown only after
   `up_to_date`/`updated`, `partial` resumes; the `refresh=true` 1-hour throttle.
-- **Cache:** owner column (`get`/`put`/`cached`/`shorten` with owner), owner-scoped 30-day expiry,
-  LRU eviction under the logical cap, `last_used` updated on hit, emergency eviction on `FULL`.
+- **Cache:** owner column (`get`/`put`/`cached`/`shorten` with owner; `Page.owner` round-trips),
+  owner-scoped 30-day expiry, LRU eviction under the cap, `last_used` updated on hit, the running
+  size total stays equal to `SUM(size_bytes)` after put/evict/clear/purge, `stats()` and the cap
+  check never read `html` (asserted with a trace callback), `incremental_vacuum` after eviction,
+  the free-space floor (injected `disk_usage`), cache files deleted on `FULL` from another store.
+- **Registration limits:** a 9 KB `/register` body → `413`; a 513-character loopback redirect URI
+  and a `jwks` field are rejected or dropped.
 - **Mode and settings:** HTTP mode with no token fails closed (`cache_clear`, VIN keying, refresh
   throttle); stdio mode keeps `cache_path` and open `cache_clear`; the HTTP entry point refuses to
   start without each required value; the fatal-error handler calls an injected exit function.
@@ -446,9 +475,10 @@ offline; **(2)** Dockerfile, Fly, the deploy workflow, the GitHub OAuth Apps, th
    cache path, privacy note); CHANGELOG. Documents to update: ARD §2 diagram, §3 (new AD17 "hosted
    server", AD1/AD2 marked development-only), §4 layout, §5.1 manifest, §5.2 settings (incl.
    `mode`), §5.2a `create_services(admit=…, charge=…)`, §5.3 (`QuotaExceeded`, `Busy`,
-   `CallDeadline`), §5.5 (the hooks, timed lock), §5.6 (owner column, cap, no VACUUM), §5.11
+   `CallDeadline`), §5.4 (VIN pages 30 days per user in HTTP mode), §5.5 (the hooks, timed lock,
+  `Page.owner`), §5.6 (owner column, size accounting, cap, incremental vacuum), §5.11
    admin-tool contracts and the `cooldown` status, §5.12 vehicle-index skill, §7 security, §8
-   CI/deploy; PRD F0.1, F0.2, F0.4, F0.6, F6.2, NFR5, NFR7, and a new risk "all users share one
+   CI/deploy; PRD F0.1, F0.2, F0.4, F0.6, F6.2, NFR2, NFR5, NFR7, and a new risk "all users share one
    egress IP: one Cloudflare challenge stops everyone; a static egress IP would help RealOEM
    identify the traffic".
 3. Marketplace installs of 0.1.0 see the new version on their next marketplace refresh (Claude Code
