@@ -287,14 +287,17 @@ in-flight sign-in; users reconnect.
 - **Cache size cap** (`cache_max_mb`): checked after each `put` against the running total; when
   over, least-recently-used rows (a `last_used` column, updated on hit) are evicted until 10 %
   under the cap. The cache database is created with `PRAGMA auto_vacuum=INCREMENTAL` (it can only
-  be set before the first table exists, so the owner-column schema change deletes and recreates the
-  cache files, which are disposable) and `PRAGMA incremental_vacuum` runs after every eviction,
+  be set before the first table exists, so the owner-column schema change closes the connection,
+  deletes the three cache files, which are disposable, and reopens) and `PRAGMA incremental_vacuum`
+  runs after every eviction,
   returning freed pages to the filesystem without the extra space a full `VACUUM` needs. No
   scheduled `VACUUM`. `PRAGMA journal_size_limit=67108864` on all three databases. 400 MB is at
   most 40 % of the volume.
 - **Free-space floor:** before each `put`, `shutil.disk_usage(cache_dir)` is checked; below 100 MB
   free the cache evicts to half the cap first, and if still below the floor the page is served
-  without being cached.
+  without being cached. A `SQLITE_FULL` raised by the cache's own `put` (for example WAL growth
+  despite the floor) is treated the same way: logged, and the page served uncached, never a failed
+  tool call.
 - `scripts/admin.py` (run via `fly ssh console` as the app user, not root, so SQLite's WAL files
   never become root-owned): `usage [--day]`, `ban <id> --reason`, `unban <id>`, `revoke <id>`,
   `prune`.
@@ -339,9 +342,10 @@ in-flight sign-in; users reconnect.
   ruleset protects `v*` tags.
 - A second GitHub OAuth App ("RealOEM Searcher (dev)", callback on `http://localhost:8080`) is used
   for local container runs, since a GitHub OAuth App takes one callback URL.
-- Fatal errors: `SQLITE_FULL` from the auth or vehicle store deletes the page-cache files (they are
-  disposable, and deleting them is the one action that frees filesystem space without needing
-  any) and retries once; `CORRUPT` or `IOERR` from the auth store, or a second `FULL`, are logged
+- Fatal errors: `SQLITE_FULL` from the auth or vehicle store closes the cache connection, deletes
+  the three cache files (`pages.sqlite3`, `-wal`, `-shm`; they are disposable, and deleting them is
+  the one action that frees filesystem space without needing any; on Linux a deleted file frees
+  nothing while it is still open, hence the close first), reopens the cache and retries once; `CORRUPT` or `IOERR` from the auth store, or a second `FULL`, are logged
   and the process ends with `os._exit(1)` after flushing logs (a `SystemExit` raised inside a
   request handler may be swallowed), so Fly's `on-failure` policy restarts it; `/healthz` never
   heals anything by itself. After `retries = 10` a crash loop leaves the machine stopped, so plan
