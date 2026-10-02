@@ -61,7 +61,8 @@ async def check(
             page.html, url=page.url, client=services.client, vehicle_id=str(vid)
         )
     except LayoutChanged:
-        services.cache.shorten(page.url, EXPIRE_NOW)  # never keep a page we cannot parse
+        # Never keep a page we cannot parse.
+        services.cache.shorten(page.url, EXPIRE_NOW, owner=page.owner)
         raise
     if search is None or not matches(query, search.part_number):
         raise _unknown_part(query)

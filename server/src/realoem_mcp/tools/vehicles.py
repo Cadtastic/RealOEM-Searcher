@@ -52,7 +52,8 @@ def _parse(services: Services, page: Page) -> VehicleIndexPage:
     try:
         return parse_vehicles(page.html, url=page.url, brands=services.brands)
     except LayoutChanged:
-        services.cache.shorten(page.url, timedelta(0))  # never keep an unparseable page cached
+        # Never keep an unparseable page cached.
+        services.cache.shorten(page.url, timedelta(0), owner=page.owner)
         raise
 
 
@@ -139,7 +140,7 @@ async def update_index(services: Services, max_pages: int) -> VehicleIndexUpdate
     probe_number = max(1, math.ceil(probe_total / PAGE_SIZE))
     probe_page = await _fetch(services, probe_number)
     if probe_number > 1 and is_past_end(probe_page.html):
-        services.cache.shorten(probe_page.url, timedelta(0))
+        services.cache.shorten(probe_page.url, timedelta(0), owner=probe_page.owner)
         first, first_page = await fetch_vehicles_page(services, 1)
         index.record_check(remote_total=first.total, resume=None)
         return _result(
