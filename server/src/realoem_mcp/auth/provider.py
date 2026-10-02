@@ -24,9 +24,11 @@ from mcp.server.auth.provider import (
     OAuthAuthorizationServerProvider,
     RefreshToken,
     RegistrationError,
+    TokenError,
     construct_redirect_uri,
 )
-from mcp.shared.auth import OAuthClientInformationFull
+from mcp.shared.auth import OAuthClientInformationFull, OAuthToken
+from pydantic import AnyUrl
 
 from realoem_mcp.auth.github import GitHubLogin, GitHubUnavailable
 from realoem_mcp.auth.keys import Keys, b64url, new_secret, pkce_challenge
@@ -299,3 +301,179 @@ class RealOemAuthProvider(
         return RedirectToClient(
             construct_redirect_uri(pending.redirect_uri, code=issued, state=pending.client_state)
         )
+
+    # --- codes and tokens ---------------------------------------------------------------------
+
+    async def load_authorization_code(
+        self, client: OAuthClientInformationFull, authorization_code: str
+    ) -> IssuedCode | None:
+        record = self._store.code(self._keys.hash("code", authorization_code))
+        if record is None:
+            return None
+        if record.used_at is not None or record.expires_at <= self._now():
+            # OAuth 2.1 section 4.1.3: a replayed code revokes the tokens issued from it.
+            self._store.revoke_family(record.family)
+            return None
+        return IssuedCode(
+            code=authorization_code,
+            scopes=list(record.scopes),
+            expires_at=record.expires_at,
+            client_id=record.client_id,
+            code_challenge=record.code_challenge,
+            redirect_uri=AnyUrl(record.redirect_uri),
+            redirect_uri_provided_explicitly=record.redirect_uri_explicit,
+            resource=record.resource,
+            subject=record.subject,
+            family=record.family,
+        )
+
+    async def exchange_authorization_code(
+        self, client: OAuthClientInformationFull, authorization_code: IssuedCode
+    ) -> OAuthToken:
+        now = self._now()
+        subject = authorization_code.subject or ""
+        family = authorization_code.family
+
+        def exchange() -> OAuthToken | None:
+            if not self._store.use_code(self._keys.hash("code", authorization_code.code), now):
+                return None  # the other of two concurrent exchanges won
+            live = self._store.active_families(subject, now)
+            for oldest in live[: max(0, len(live) - MAX_FAMILIES + 1)]:
+                self._store.revoke_family(oldest)
+            expires_at = now + _seconds(FAMILY_LIFETIME)
+            self._store.add_family(family, subject, client.client_id, now, expires_at)
+            return self._issue(
+                family,
+                subject,
+                client.client_id,
+                authorization_code.scopes,
+                authorization_code.resource or self.resource,
+                now,
+                expires_at,
+            )
+
+        tokens = self._store.atomic(exchange)
+        if tokens is None:
+            self._store.revoke_family(family)
+            raise TokenError("invalid_grant", "authorization code was already used")
+        return tokens
+
+    def _issue(
+        self,
+        family: str,
+        subject: str,
+        client_id: str,
+        scopes: list[str],
+        resource: str,
+        now: int,
+        family_expires_at: int,
+    ) -> OAuthToken:
+        access, refresh = new_secret(), new_secret()
+        access_expires = now + _seconds(ACCESS_LIFETIME)
+        refresh_expires = min(now + _seconds(REFRESH_IDLE), family_expires_at)
+        for value, kind, expires_at in (
+            (access, "access", access_expires),
+            (refresh, "refresh", refresh_expires),
+        ):
+            self._store.add_token(
+                self._keys.hash(kind, value),
+                kind,
+                family,
+                subject,
+                client_id,
+                scopes,
+                resource,
+                expires_at,
+            )
+        self._store.touch_client(client_id, now)
+        return OAuthToken(
+            access_token=access,
+            expires_in=_seconds(ACCESS_LIFETIME),
+            scope=" ".join(scopes),
+            refresh_token=refresh,
+        )
+
+    async def load_access_token(self, token: str) -> IssuedAccessToken | None:
+        """Only an unexpired, unrevoked access token of a user who is not banned. Read from the
+        database on every request: no cached tokens or bans."""
+        record = self._store.token(self._keys.hash("access", token), "access")
+        now = self._now()
+        if (
+            record is None
+            or record.family_revoked
+            or record.banned
+            or record.expires_at <= now
+            or record.family_expires_at <= now
+        ):
+            return None
+        return IssuedAccessToken(
+            token=token,
+            client_id=record.client_id,
+            scopes=list(record.scopes),
+            expires_at=record.expires_at,
+            resource=record.resource,
+            subject=record.subject,
+            family=record.family,
+        )
+
+    async def load_refresh_token(
+        self, client: OAuthClientInformationFull, refresh_token: str
+    ) -> IssuedRefreshToken | None:
+        record = self._store.token(self._keys.hash("refresh", refresh_token), "refresh")
+        if record is None:
+            return None
+        if record.rotated_at is not None:  # a refresh token used twice: someone has a copy
+            if not record.family_revoked:
+                self._store.revoke_family(record.family)
+                log.warning("refresh_reuse %s", record.subject)
+            return None
+        now = self._now()
+        if (
+            record.family_revoked
+            or record.banned
+            or record.expires_at <= now
+            or record.family_expires_at <= now
+        ):
+            return None
+        return IssuedRefreshToken(
+            token=refresh_token,
+            client_id=record.client_id,
+            scopes=list(record.scopes),
+            expires_at=record.expires_at,
+            resource=record.resource,
+            subject=record.subject,
+            family=record.family,
+            family_expires_at=record.family_expires_at,
+        )
+
+    async def exchange_refresh_token(
+        self,
+        client: OAuthClientInformationFull,
+        refresh_token: IssuedRefreshToken,
+        scopes: list[str],
+    ) -> OAuthToken:
+        now = self._now()
+
+        def rotate() -> OAuthToken | None:
+            if not self._store.rotate(self._keys.hash("refresh", refresh_token.token), now):
+                return None  # the other of two concurrent refreshes won
+            return self._issue(
+                refresh_token.family,
+                refresh_token.subject or "",
+                client.client_id,
+                scopes,
+                refresh_token.resource or self.resource,
+                now,
+                refresh_token.family_expires_at,
+            )
+
+        tokens = self._store.atomic(rotate)
+        if tokens is None:
+            self._store.revoke_family(refresh_token.family)
+            log.warning("refresh_reuse %s", refresh_token.subject)
+            raise TokenError("invalid_grant", "refresh token was already used")
+        return tokens
+
+    async def revoke_token(self, token: IssuedAccessToken | IssuedRefreshToken) -> None:
+        """Revokes the token and every token issued with it (its whole family)."""
+        self._store.revoke_family(token.family)
