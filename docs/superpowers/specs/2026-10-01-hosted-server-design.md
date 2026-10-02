@@ -1,6 +1,8 @@
 # Hosted Server Design
 
-**Status:** approved design, 2026-10-01, revised after two rounds of spec and security review.
+**Status:** approved design, 2026-10-01, revised after two rounds of spec and security review,
+and amended by the reviews of implementation plans 1a (cache file, client hooks, quota details)
+and 1b (sign-in hardening: allow-list checks, IPv6 rate-limit keys, form limits, token logging).
 Supersedes the "local stdio server" distribution of ARD AD1/AD2 for the plugin; the stdio entry
 point stays for development and tests.
 
@@ -53,7 +55,7 @@ https://<host>            (Fly.io, one machine, one Python process: uvicorn + th
   └─ /healthz ................. liveness only (constant 200, no database access)
         │
         ├─ RealOemClient (unchanged rules, shared by every user) ──► realoem.com
-        └─ Fly volume /data: cache/pages.sqlite3 (page cache, size-capped),
+        └─ Fly volume /data: cache/pages.v2.sqlite3 (page cache, size-capped),
                              data/vehicles.sqlite3 (vehicle index), data/auth.sqlite3 (auth store)
 ```
 
@@ -134,14 +136,14 @@ safe only because registration admits nothing but Claude's callbacks.
 | Method | Behaviour |
 |---|---|
 | `register_client` | Parses every `redirect_uris` entry with `urllib.parse`. Accepts exactly the URLs in `settings.redirect_allowlist` (default `https://claude.ai/api/mcp/auth_callback`; string match) and loopback URIs: scheme `http`, host exactly `localhost` or `127.0.0.1`, no userinfo, no fragment, any port, at most 512 characters. Anything else, more than 5 redirect URIs, or `client_name` over 200 characters → `RegistrationError("invalid_redirect_uri" / "invalid_client_metadata")` (the SDK's four RFC 7591 codes are the only ones it can return, always as `400`). Persists only `client_id`, the secret, `client_name`, `redirect_uris`, `grant_types`, `response_types`, `token_endpoint_auth_method`, `scope` and `created_at`; every other metadata field (`jwks`, `jwks_uri`, `contacts`, …) is dropped. Body size and rate limits live in middleware (4.9). |
-| `get_client` | Returns a `ClaudeClient(OAuthClientInformationFull)` whose `validate_redirect_uri` matches loopback URIs on scheme, host, path and query while ignoring the port, and returns the requested URI (with its port) so the SDK's `/token` equality check passes; everything else is an exact string match. |
+| `get_client` | Returns a `ClaudeClient(OAuthClientInformationFull)` whose `validate_redirect_uri` matches loopback URIs on scheme, host, path (an empty path counts as `/`) and query while ignoring the port, and returns the requested URI (with its port) so the SDK's `/token` equality check passes; everything else is an exact string match. Keeps only the redirect URIs today's allow-list admits (`None` when none is left), so narrowing the allow-list takes effect at once. |
 | `authorize` | Rejects `state` over 512 characters, a `code_challenge` that is not 43 base64url characters, and `resource` or `scope` over 256 characters with `AuthorizeError("invalid_request")`. Validates `resource`: absent → `<public URL>/mcp`; present and not equal to it (URL comparison: scheme and host case-insensitive, trailing slash ignored) → `AuthorizeError("invalid_target")`. `scopes` `None` → `["realoem"]`. Stores a pending request `{id (256-bit random), client_id, redirect_uri, client_state, code_challenge, resource, scopes, status="awaiting_consent", expires_at=now+10 min}` and returns `https://<host>/consent?req=<id>`. **Never contacts GitHub.** |
 | `consent(req_id, decision)` | `allow`: `UPDATE pending SET status='consented', gh_state_hash=? WHERE id=? AND status='awaiting_consent' AND expires_at > now` (0 rows → `ExpiredRequest`), where the GitHub `state` is 256-bit random and `gh_state_hash = H_github(state)`. The PKCE verifier is **never stored**: `verifier = base64url(HMAC-SHA256(k_github_pkce, req_id + "\|" + state))` (43 characters), recomputed at the callback. Returns `StartGitHub(authorization_url, state)`. `deny`: `UPDATE … SET status='denied' WHERE id=? AND status='awaiting_consent'` (0 rows → `ExpiredRequest`); returns `RedirectToClient(redirect_uri, error="access_denied", state=client_state)`. |
 | `github_return(query, state_cookie)` | GitHub's callback carries only `code` and `state`. Requires `state_cookie == query.state` (constant-time); finds the row by `gh_state_hash = H_github(query.state)`; then `UPDATE pending SET status='github_returned', gh_state_hash=NULL WHERE id=? AND status='consented' AND gh_state_hash=? AND expires_at > now` — 0 rows → `ShowError("expired")`, **no redirect**. If the query carries `error=access_denied` (user cancelled at GitHub) → `RedirectToClient(error="access_denied")`. Exchanges the code with the recomputed verifier, reads `id`, `login`, `created_at`. Banned → `ShowError("banned")`. GitHub unreachable → `ShowError("github_unavailable")`. Otherwise upserts the user, writes the consent audit row, issues a one-time authorization code bound to the pending request (`client_id`, `redirect_uri`, `code_challenge`, `resource`, `scopes`, subject, 10-minute expiry) and returns `RedirectToClient(redirect_uri, code=…, state=client_state)`. |
 | `load_authorization_code` | Lookup by `H_code`. A used or expired code returns `None` **and** revokes the token family issued from it (OAuth 2.1 §4.1.3). |
 | `exchange_authorization_code` | In one transaction: `UPDATE authorization_codes SET used_at=? WHERE hash=? AND used_at IS NULL`; 0 rows → revoke the family and raise `TokenError("invalid_grant")`; else create a new family (at most 20 active families per subject; the oldest is revoked first) and insert the access token (`kind='access'`, 1 h) and refresh token (`kind='refresh'`, idle 30 days, family absolute expiry 90 days) with the code's `resource` and scopes. Used codes are kept until `expires_at`. |
 | `load_access_token` | Lookup by `H_access`, restricted to `kind='access'`; returns `AccessToken(token, client_id, scopes, expires_at, resource, subject)` or `None` when unknown, expired, revoked, or the subject has `banned_at` set. No in-process caching of tokens or bans. |
-| `load_refresh_token` | Lookup by `H_refresh`, restricted to `kind='refresh'`; any other kind or an unknown hash → `None`. A rotated or revoked refresh hash → revoke every token in the family, log `refresh_reuse github:<id>`, return `None` (the SDK then answers `invalid_grant`). |
+| `load_refresh_token` | Lookup by `H_refresh`, restricted to `kind='refresh'`; any other kind or an unknown hash → `None`. A rotated refresh hash in a live family → revoke every token in the family, log `refresh_reuse github:<id>` (once per incident), return `None` (the SDK then answers `invalid_grant`). A token of a family already revoked (ban, `/revoke`, the 20-family cap) → `None` without a log line, so `refresh_reuse` stays a clean signal for section 10's question. |
 | `exchange_refresh_token` | In one transaction: `UPDATE tokens SET rotated_at=? WHERE hash=? AND kind='refresh' AND rotated_at IS NULL AND revoked=0`; 0 rows → revoke the family and raise `TokenError("invalid_grant")`; else issue a new access and refresh token in the same family (scopes may only shrink; the SDK enforces this). Rotated rows are kept until the family's absolute expiry. |
 | `revoke_token` | Revokes the token and its whole family. |
 
@@ -184,8 +186,9 @@ stored, logged or passed through.
   SameSite=Strict; Path=/; Max-Age=600`) and renders the consent form with hidden fields `req`,
   `exp` and `csrf = HMAC-SHA256(k_consent, "consent|" + req + "|" + cookie + "|" + exp)`. Trusted
   data (client, redirect URI, scopes, resource, PKCE) stays on the server-side row only.
-- `POST /consent`: requires the cookie, a valid MAC (`hmac.compare_digest`) and unexpired `exp`,
-  then calls `provider.consent(req, decision)`. `StartGitHub` → set `__Host-ro_gh_state=<state>`
+- `POST /consent`: reads at most 8 fields of at most 1 KB and no files (a bigger form is refused
+  before it is buffered), requires the cookie, a valid MAC (`hmac.compare_digest`) and an
+  unexpired `exp` of plain ASCII digits, then calls `provider.consent(req, decision)`. `StartGitHub` → set `__Host-ro_gh_state=<state>`
   (`Secure; HttpOnly; SameSite=Lax; Path=/; Max-Age=600`; Lax because GitHub's return is a
   cross-site top-level GET) and `302` to GitHub. `RedirectToClient` → `302`. `ExpiredRequest` →
   error page.
@@ -196,7 +199,7 @@ stored, logged or passed through.
   (`http://localhost:<port>/callback`) that calls itself '<name>'". Both get the line "Continue only
   if you just connected RealOEM Searcher in Claude." Always shown: the full redirect URI for this
   request, and what is granted ("RealOEM Searcher tools, counted against your daily quota; reads
-  your public GitHub id and username only"). `client_name` is HTML-escaped, stripped of control and
+  only the id, username and creation date of your public GitHub profile"). `client_name` is HTML-escaped, stripped of control and
   bidirectional-override characters, and truncated to 64 characters. Buttons: Allow, Deny.
 - **Error pages:** banned ("access to RealOEM Searcher is suspended" + contact link), expired or
   invalid request, GitHub unavailable, busy (from the middleware of 4.9, `503` with `Retry-After`).
@@ -207,7 +210,8 @@ stored, logged or passed through.
 
 ### 4.7 `quota.py`, `gate.py`, and the client hooks
 
-`RealOemClient` gains two optional hooks, both `None` in stdio mode:
+`RealOemClient` gains three optional hooks, all `None` in stdio mode (the third, `owner`, decides
+which cache entry a page belongs to; see 4.8):
 
 - `admit()`: an async context manager entered **before** waiting for the lock. It refuses
   immediately when the user is already at the day's limit, enforces at most 4 waiting-or-in-flight
@@ -222,14 +226,15 @@ stored, logged or passed through.
 - `charge()`: called **inside** the lock, after the second cache check misses and before the
   network request. `Quota.charge(subject)` runs one transaction: the user's row
   (`UPDATE usage SET requests = requests + 1 WHERE subject=? AND day=? AND requests < ?`, after
-  inserting the day's row if missing) and, when `global_daily_limit > 0`, the global row the same
-  way; if either updates 0 rows the transaction rolls back and `QuotaExceeded(RealOemError)` is
-  raised, so refused attempts are never counted. The limit is `new_user_daily_limit` when the
-  user's `github_created_at` is younger than `min_account_age_days`, else `user_daily_limit`;
-  `0` means unlimited. Admins are not exempt. Charged once per `RealOemClient.fetch` that goes to
+  inserting the day's row if missing) and the global row the same way (always counted, so the cap
+  can be switched on mid-day; it refuses only when `global_daily_limit > 0`); if either updates 0
+  rows the transaction rolls back and `QuotaExceeded(RealOemError)` is raised, so refused
+  attempts are never counted. The limit is `new_user_daily_limit` when the user's
+  `github_created_at` is younger than `min_account_age_days` or unknown (fail closed), else
+  `user_daily_limit`; `0` means unlimited. Admins are not exempt. Charged once per `RealOemClient.fetch` that goes to
   the network; retries and redirect hops are free.
-- `create_services(settings, *, admit=None, charge=None, transport=None, clock=None, sleep=None)`
-  passes the hooks to the client.
+- `create_services(settings, *, admit=None, charge=None, owner=None, transport=None, clock=None,
+  sleep=None)` passes the hooks to the client.
 - Messages use the configured numbers: "You've used your {limit} RealOEM lookups for today; the
   limit resets at 00:00 UTC. Cached results remain available." / "RealOEM Searcher has reached its
   daily request limit; try again after 00:00 UTC."
@@ -257,13 +262,16 @@ New `Settings` fields (env; defaults): `mode` (set by the entry point, not by en
 (`REALOEM_REDIRECT_ALLOWLIST`, default `https://claude.ai/api/mcp/auth_callback`),
 `hosted_client_range` (`REALOEM_HOSTED_CLIENT_RANGE`, `160.79.104.0/21`), `auth_dir`
 (`REALOEM_AUTH_DIR`, default `data_dir`). The HTTP entry point refuses to start when a required
-value is missing or malformed. Rotating `secret_key` restarts the server and voids every token and
+value is missing or malformed: the public URL must be a bare origin (stored in canonical,
+lower-case form), and every allow-list entry an `https://` URL with a host, no userinfo or
+fragment, at most 512 characters. Rotating `secret_key` restarts the server and voids every token and
 in-flight sign-in; users reconnect.
 
 - `cache_clear`: in HTTP mode admins only (`require_user`; tool error otherwise); in stdio mode
   unchanged.
-- `server_status`: in HTTP mode omits `cache_path` and adds `quota`; in stdio mode unchanged
-  (PRD F0.6 and the existing tests keep applying to the local server).
+- `server_status`: in HTTP mode returns `cache_path` as `null` (a tool's output schema is fixed) and
+  adds `quota`; in stdio mode unchanged (PRD F0.6 and the existing tests keep applying to the
+  local server).
 - `refresh=true` in HTTP mode is honoured only when the cached copy is older than 1 hour;
   otherwise the cached page is returned (`from_cache=true` tells the truth).
 - `update_vehicle_index` in HTTP mode is single-flight: an update in progress makes concurrent
@@ -276,8 +284,8 @@ in-flight sign-in; users reconnect.
 - **VIN pages are not shared:** `PageCache` gains an `owner` column with primary key
   `(owner, url)`: `''` for shared pages, `H_cache_owner(subject)` for `select?vin=` and
   `production?vin=` in HTTP mode. `get`, `put`, `cached` and `shorten` take the owner. `Page` gains
-  `owner`, set by the client, and the three `shorten` calls in `tools/vin.py` become
-  `services.cache.shorten(page.owner, page.url, ttl)`. `Page.url` stays the RealOEM URL, so
+  `owner`, set by the client, and every `shorten` call passes it:
+  `services.cache.shorten(page.url, ttl, owner=page.owner)`. `Page.url` stays the RealOEM URL, so
   `source_urls` and `redirected_away` are unaffected. Owner-scoped entries expire after 30 days (the
   shared VIN TTL of 180 days does not apply in HTTP mode; ARD §5.4 and PRD NFR2 record this).
   Reason: a shared entry's `from_cache`/`fetched_at` would reveal whether and when someone else
@@ -292,40 +300,47 @@ in-flight sign-in; users reconnect.
   eviction and the purge never walk a page's overflow chain either.
 - **Cache size cap** (`cache_max_mb`): checked after each `put` against the running total; when
   over, least-recently-used rows (a `last_used` column, updated on hit) are evicted until 10 %
-  under the cap. The cache database is created with `PRAGMA auto_vacuum=INCREMENTAL` (it can only
-  be set before the first table exists, so the owner-column schema change closes the connection,
-  deletes the three cache files, which are disposable, and reopens) and `PRAGMA incremental_vacuum`
-  runs after every eviction,
-  returning freed pages to the filesystem without the extra space a full `VACUUM` needs. No
+  under the cap. The cache database is created with `PRAGMA auto_vacuum=INCREMENTAL`, which can
+  only be set before the first table exists, so the version 2 schema lives in a new file,
+  `pages.v2.sqlite3` (the version 1 file `pages.sqlite3` is deleted when possible; the cache is
+  disposable). `PRAGMA incremental_vacuum` runs after every eviction, in chunks each followed by a
+  `TRUNCATE` checkpoint (in WAL mode the moved pages are first written to the `-wal` file),
+  returning freed pages to the filesystem with at most one chunk of extra space, far less than a
+  full `VACUUM` needs. No
   scheduled `VACUUM`. `PRAGMA journal_size_limit=67108864` on all three databases. 400 MB is at
   most 40 % of the volume.
 - **Free-space floor:** before each `put`, `shutil.disk_usage(cache_dir)` is checked; below 100 MB
   free the cache evicts to half the cap first, and if still below the floor the page is served
-  without being cached. A `SQLITE_FULL` raised by the cache's own `put` (for example WAL growth
-  despite the floor) is treated the same way: logged, and the page served uncached, never a failed
-  tool call.
+  without being cached. A `SQLITE_FULL` raised by the cache's own `put` or `shorten` (for example
+  WAL growth despite the floor) is treated the same way: logged, and the page served uncached,
+  never a failed tool call.
 - `scripts/admin.py` (run via `fly ssh console` as the app user, not root, so SQLite's WAL files
-  never become root-owned): `usage [--day]`, `ban <id> --reason`, `unban <id>`, `revoke <id>`,
-  `prune`.
+  never become root-owned; it refuses to run as root, and refuses an auth database path that does
+  not exist rather than create an empty one): `usage [--day]`, `ban <id> --reason`, `unban <id>`,
+  `revoke <id>`, `prune`.
 
 ### 4.9 Rate limits, purging, retention
 
 - ASGI middleware rejects `/register` bodies over 8 KB with `413` (the SDK alone accepts 4 MiB).
-- ASGI middleware keyed on `Fly-Client-IP` (set by Fly's proxy; the socket peer is the proxy):
+- ASGI middleware keyed on `Fly-Client-IP` (set by Fly's proxy; the socket peer is the proxy; an
+  IPv6 client counts by its /64, since one host controls a whole /64, and an IPv4-mapped address
+  as IPv4):
   `/register` 30 per hour per address outside `hosted_client_range` and 600 per hour across that
   range (hosted Claude registers a new client per connection), with a global ceiling of 2,000 a
   day that applies only to addresses **outside** the range; `/authorize` 60 per 10 minutes per
   address. Over a limit → `429` with `Retry-After`.
 - `/authorize` middleware refuses new pending requests above 100,000 live rows (about 50 MB) with
   the busy page (`503`, `Retry-After`); the provider does not check this.
-- Hourly purge task: expired pending rows, codes and tokens; clients that never completed an
+- Purge task, at startup and then hourly: expired pending rows, codes and tokens; clients that never completed an
   authorization after 24 hours, other clients 90 days after `last_issued_at`; `usage` rows older
   than 90 days; the consent audit after 90 days.
 - Retention and privacy: the server keeps GitHub id and login, daily usage counts and ban records;
   no query content is stored outside the page cache (VIN pages per user for 30 days); logs never
   carry query strings of OAuth routes, `Authorization` headers, form bodies, tokens, codes, GitHub
   tokens or VINs (in HTTP mode RealOEM URLs of page types `select` and `production` are logged with
-  query values masked). The README gets a short privacy note.
+  query values masked, and a log filter masks `vin=` values and the SDK's error text of a failed
+  `decode_vin` in every log line); request paths are logged escaped, so a path cannot forge a log
+  line. The README gets a short privacy note.
 
 ### 4.10 Deployment
 
@@ -336,12 +351,13 @@ in-flight sign-in; users reconnect.
 - `fly.toml` at the repository root: one process, internal port 8080, `force_https = true`,
   `auto_stop_machines = "off"`, `[http_service.concurrency] type = "requests", soft_limit = 100,
   hard_limit = 200`, HTTP check on `/healthz` (routing only), `[[restart]] policy = "on-failure",
-  retries = 10`, volume `realoem_data` at `/data`, env `REALOEM_CACHE_DIR=/data/cache`,
+  retries = 10`, volume `realoem_data` at `/data`, env `REALOEM_PUBLIC_URL` (not a secret, and
+  reviewed with the rest of `fly.toml`), `REALOEM_CACHE_DIR=/data/cache`,
   `REALOEM_DATA_DIR=/data/data`, `REALOEM_BRANDS_DIR=/app/brands`. `flyctl deploy --ha=false` runs
   from the repository root.
-- Secrets via `fly secrets set`: `REALOEM_PUBLIC_URL`, `REALOEM_GITHUB_CLIENT_ID`,
-  `REALOEM_GITHUB_CLIENT_SECRET`, `REALOEM_SECRET_KEY`, `REALOEM_ADMINS`. Setting a secret restarts
-  the machine (a few seconds of downtime).
+- Secrets via `fly secrets set`: `REALOEM_GITHUB_CLIENT_ID`, `REALOEM_GITHUB_CLIENT_SECRET`,
+  `REALOEM_SECRET_KEY`, `REALOEM_ADMINS`. Setting a secret restarts the machine (a few seconds of
+  downtime).
 - GitHub Actions `deploy.yml`: on a `v*` tag it runs lint and the offline tests itself (CI does not
   run on tags), then `flyctl deploy --remote-only --ha=false` with an app-scoped deploy token
   (`fly tokens create deploy`) from a GitHub Environment with a required reviewer; a repository
@@ -349,10 +365,11 @@ in-flight sign-in; users reconnect.
 - A second GitHub OAuth App ("RealOEM Searcher (dev)", callback on `http://localhost:8080`) is used
   for local container runs, since a GitHub OAuth App takes one callback URL.
 - Fatal errors: `SQLITE_FULL` from the auth or vehicle store closes the cache connection, deletes
-  the three cache files (`pages.sqlite3`, `-wal`, `-shm`; they are disposable, and deleting them is
+  the three cache files (`pages.v2.sqlite3`, `-wal`, `-shm`; they are disposable, and deleting them is
   the one action that frees filesystem space without needing any; on Linux a deleted file frees
-  nothing while it is still open, hence the close first), reopens the cache and retries once; `CORRUPT` or `IOERR` from the auth store, or a second `FULL`, are logged
-  and the process ends with `os._exit(1)` after flushing logs (a `SystemExit` raised inside a
+  nothing while it is still open, hence the close first), reopens the cache and retries once;
+  `CORRUPT`, `IOERR` or `NOTADB` from the auth store, or a second `FULL`, are logged and the
+  process ends with `os._exit(1)` after flushing logs (a `SystemExit` raised inside a
   request handler may be swallowed), so Fly's `on-failure` policy restarts it; `/healthz` never
   heals anything by itself. After `retries = 10` a crash loop leaves the machine stopped, so plan
   2 adds an external uptime check on `/healthz` that alerts the owner.
@@ -413,7 +430,7 @@ in-flight sign-in; users reconnect.
 | Consent form without its cookie, stale, or replayed; callback with missing or mismatched state | Error page, never a redirect | "This sign-in request has expired. Start again from Claude." |
 | Restart (deploy, migration, secret change) | Seconds of failed connections; nothing lost (no sessions; tokens and cache on disk) | Claude retries |
 | Disk nearly full | Free-space floor: evict, then serve pages uncached | None (slower repeat questions) |
-| Disk full | Page-cache files deleted and one retry; a second failure exits 1 | Brief outage; a persistent crash loop stops the machine and triggers the uptime alert |
+| Disk full | Page-cache files deleted and one retry; a second full disk exits 1 | Brief outage; a persistent crash loop stops the machine and triggers the uptime alert |
 | Fatal auth-store error | Process exits 1 → Fly restarts it | Brief outage |
 
 Logs carry `github:<id>`, tool name, page type and outcome; see 4.9 for what they never carry.
