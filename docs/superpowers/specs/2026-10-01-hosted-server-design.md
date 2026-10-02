@@ -199,7 +199,7 @@ stored, logged or passed through.
   (`http://localhost:<port>/callback`) that calls itself '<name>'". Both get the line "Continue only
   if you just connected RealOEM Searcher in Claude." Always shown: the full redirect URI for this
   request, and what is granted ("RealOEM Searcher tools, counted against your daily quota; reads
-  your public GitHub id and username only"). `client_name` is HTML-escaped, stripped of control and
+  only the id, username and creation date of your public GitHub profile"). `client_name` is HTML-escaped, stripped of control and
   bidirectional-override characters, and truncated to 64 characters. Buttons: Allow, Deny.
 - **Error pages:** banned ("access to RealOEM Searcher is suspended" + contact link), expired or
   invalid request, GitHub unavailable, busy (from the middleware of 4.9, `503` with `Retry-After`).

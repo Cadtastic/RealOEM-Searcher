@@ -4640,8 +4640,8 @@ from realoem_mcp.config import CLAUDE_CALLBACK, REPO_URL
 MAX_SHOWN_NAME = 64
 CONTINUE_ONLY = "Continue only if you just connected RealOEM Searcher in Claude."
 GRANTED = (
-    "RealOEM Searcher tools, counted against your daily quota; reads your public GitHub id and "
-    "username only"
+    "RealOEM Searcher tools, counted against your daily quota; reads only the id, username and "
+    "creation date of your public GitHub profile"
 )
 ERRORS = {  # kind -> (status, message)
     "expired": (400, "This sign-in request has expired. Start again from Claude."),
