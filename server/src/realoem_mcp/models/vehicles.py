@@ -39,7 +39,8 @@ class VehicleSearchResult(BaseModel):
 
 
 class VehicleIndexUpdateResult(ResultMeta):
-    status: Literal["up_to_date", "updated", "partial", "drift"]
+    # "cooldown": hosted server only; the shared index was checked under an hour ago.
+    status: Literal["up_to_date", "updated", "partial", "drift", "cooldown"]
     added: list[IndexedVehicle]
     remote_total: int
     local_total: int
