@@ -91,7 +91,7 @@ async def test_a_tampered_or_stale_consent_shows_an_error_never_a_redirect(
             "consent", f"consent|{form['req']}|{cookie}|1"
         )
     if tamper == "exp-unicode":  # "²" passes str.isdigit() but int() refuses it
-        form["exp"] = "²"
+        form["exp"] = "\u00b2"
     headers = {
         "no-cookie": {},
         "other-cookie": {"Cookie": "__Host-ro_csrf=someone-else"},
