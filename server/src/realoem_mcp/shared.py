@@ -23,6 +23,7 @@ from realoem_mcp.http_client import Owner
 from realoem_mcp.page_types import PageType
 from realoem_mcp.quota import QUOTA_KEY, Quota
 from realoem_mcp.services import Services, create_services
+from realoem_mcp.storage_guard import Runner, run_directly
 
 
 @dataclass
@@ -61,11 +62,13 @@ def build_shared(
     clock: Callable[[], float] | None = None,
     sleep: Callable[[float], Awaitable[None]] | None = None,
     now: Callable[[], datetime] | None = None,
+    run: Runner = run_directly,
 ) -> Shared:
     """Services for the hosted server: every cache-miss fetch is admitted, charged to the
     signed-in caller and, for VIN pages, cached for that caller only.
 
-    usage_conn is an autocommit SQLite connection that holds the `usage` table.
+    usage_conn is an autocommit SQLite connection that holds the `usage` table. run is the
+    storage guard the quota and the vehicle index use (the HTTP app passes StorageGuard.run).
     """
     if settings.mode != "http":
         raise ValueError("build_shared needs Settings(mode='http')")
@@ -75,6 +78,7 @@ def build_shared(
         usage_conn,
         settings,
         account_created_at=account_created_at,
+        run=run,
         **({"now": now} if now is not None else {}),
     )
     gate = FetchGate(settings, quota, clock=clock or time.monotonic)
@@ -88,6 +92,7 @@ def build_shared(
         charge=lambda: quota.charge(require_user(settings).subject),
         owner=vin_page_owner(settings, owner_key),
     )
+    services.run_storage = run
     services.extras[QUOTA_KEY] = quota
     services.extras[GATE_KEY] = gate
     return Shared(services=services, quota=quota, gate=gate)

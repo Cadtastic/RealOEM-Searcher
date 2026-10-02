@@ -13,6 +13,7 @@ from datetime import UTC, datetime, timedelta
 
 from realoem_mcp.config import Settings
 from realoem_mcp.errors import QuotaExceeded
+from realoem_mcp.storage_guard import AUTH, Runner, run_directly
 
 USAGE_SCHEMA = """
 CREATE TABLE IF NOT EXISTS usage (
@@ -48,13 +49,16 @@ class Quota:
         *,
         account_created_at: Callable[[str], datetime | None],
         now: Callable[[], datetime] = _utc_now,
+        run: Runner = run_directly,
     ) -> None:
         """account_created_at returns the subject's GitHub account creation time, timezone-aware,
-        or None when unknown; an unknown age gets the new-account limit (fail closed)."""
+        or None when unknown; an unknown age gets the new-account limit (fail closed). run is
+        the hosted server's storage guard: the usage table lives in the auth database."""
         self._conn = conn
         self._settings = settings
         self._account_created_at = account_created_at
         self._now = now
+        self._run = run
         conn.execute(USAGE_SCHEMA)
 
     def _day(self) -> str:
@@ -69,9 +73,12 @@ class Quota:
         return self._settings.user_daily_limit
 
     def _used(self, subject: str, day: str) -> int:
-        row = self._conn.execute(
-            "SELECT requests FROM usage WHERE subject = ? AND day = ?", (subject, day)
-        ).fetchone()
+        row = self._run(
+            AUTH,
+            lambda: self._conn.execute(
+                "SELECT requests FROM usage WHERE subject = ? AND day = ?", (subject, day)
+            ).fetchone(),
+        )
         return row[0] if row else 0
 
     def refusal(self, subject: str) -> QuotaExceeded | None:
@@ -90,6 +97,9 @@ class Quota:
         day = self._day()
         limit = self.limit_for(subject)
         cap = self._settings.global_daily_limit
+        self._run(AUTH, lambda: self._charge(subject, day, limit, cap))
+
+    def _charge(self, subject: str, day: str, limit: int, cap: int) -> None:
         self._conn.execute("BEGIN IMMEDIATE")
         try:
             if not self._bump(subject, day, limit):

@@ -14,10 +14,12 @@ from pathlib import Path
 from typing import Any
 
 from realoem_mcp.brands import BrandRegistry
+from realoem_mcp.cache import JOURNAL_SIZE_LIMIT
 from realoem_mcp.config import Settings
 from realoem_mcp.errors import RealOemError
 from realoem_mcp.models.common import VehicleRef
 from realoem_mcp.models.vehicles import IndexedVehicle, IndexMeta
+from realoem_mcp.storage_guard import VEHICLES, Runner, run_directly
 from realoem_mcp.vehicle_ids import VehicleId
 
 DB_FILENAME = "vehicles.sqlite3"
@@ -114,27 +116,39 @@ def _casefold(value: str | None) -> str:
 
 
 class VehicleIndex:
-    def __init__(self, conn: sqlite3.Connection, brands: BrandRegistry) -> None:
+    def __init__(
+        self, conn: sqlite3.Connection, brands: BrandRegistry, *, run: Runner = run_directly
+    ) -> None:
         self._conn = conn
         self._segments = brands.brand_segments()
+        self._run = run  # hosted server: the storage guard, for every write
 
     @classmethod
-    def open(cls, settings: Settings, brands: BrandRegistry) -> VehicleIndex:
+    def open(
+        cls, settings: Settings, brands: BrandRegistry, *, run: Runner = run_directly
+    ) -> VehicleIndex:
         """Open the store, (re)loading the baseline when the committed files changed.
 
         Missing baseline files count as an empty baseline, so the index works (empty) before the
         maintainer has built one. Unreadable files raise RealOemError naming the file.
         """
+        # Retrying a whole open is safe: it closes its connection before raising, and loading
+        # the schema and the baseline twice changes nothing.
+        return run(VEHICLES, lambda: cls._open(settings, brands, run))
+
+    @classmethod
+    def _open(cls, settings: Settings, brands: BrandRegistry, run: Runner) -> VehicleIndex:
         db_path = settings.data_dir / DB_FILENAME
         try:
             settings.data_dir.mkdir(parents=True, exist_ok=True)
             conn = sqlite3.connect(db_path, check_same_thread=False, isolation_level=None)
         except (OSError, sqlite3.Error) as err:
             raise RealOemError(f"The vehicle index {db_path} could not be opened: {err}") from err
-        index = cls(conn, brands)
+        index = cls(conn, brands, run=run)
         try:
             conn.create_function("fold", 1, _casefold, deterministic=True)
             conn.execute("PRAGMA journal_mode=WAL")  # several server processes may share it
+            conn.execute(f"PRAGMA journal_size_limit={JOURNAL_SIZE_LIMIT}")  # one shared volume
             index._ensure_schema()
             brand_ids = sorted(brand.id for brand in brands)
             files = [settings.brands_dir / brand_id / CSV_FILENAME for brand_id in brand_ids]
@@ -155,10 +169,13 @@ class VehicleIndex:
         self._conn.execute("BEGIN IMMEDIATE")  # take the write lock up front
         try:
             yield
+            self._conn.execute("COMMIT")
         except BaseException:
-            self._conn.execute("ROLLBACK")
+            # SQLite has already rolled back after some errors (a full disk is one); a second
+            # ROLLBACK would raise and hide the real error.
+            if self._conn.in_transaction:
+                self._conn.execute("ROLLBACK")
             raise
-        self._conn.execute("COMMIT")
 
     def _ensure_schema(self) -> None:
         """Create the tables; on a schema-version change rebuild them, keeping local rows if the
@@ -272,12 +289,16 @@ class VehicleIndex:
     def add_local(self, rows: Sequence[IndexedVehicle]) -> int:
         """Insert rows found by an update; existing keys are ignored. Returns rows inserted."""
         added_at = _now()
-        inserted = 0
-        with self._transaction():
-            for row in rows:
-                values = _db_values(csv_record(row), row.brand, "local")
-                inserted += self._conn.execute(_INSERT_NEW, (*values, added_at)).rowcount
-        return inserted
+
+        def insert() -> int:
+            inserted = 0
+            with self._transaction():
+                for row in rows:
+                    values = _db_values(csv_record(row), row.brand, "local")
+                    inserted += self._conn.execute(_INSERT_NEW, (*values, added_at)).rowcount
+            return inserted
+
+        return self._run(VEHICLES, insert)
 
     def last_remote_total(self) -> int | None:
         """RealOEM's vehicle count seen by the last update check, if any."""
@@ -293,14 +314,21 @@ class VehicleIndex:
 
     def record_check(self, *, remote_total: int, resume: tuple[str | None, int] | None) -> None:
         """Store the outcome of an update check: time, RealOEM's total, and where to resume."""
-        with self._transaction():
-            self._set_meta("last_update_at", _now())
-            self._set_meta("last_remote_total", str(remote_total))
-            if resume is None:
-                self._conn.execute("DELETE FROM meta WHERE key IN ('resume_start', 'resume_page')")
-            else:
-                self._set_meta("resume_start", resume[0] or "")
-                self._set_meta("resume_page", str(resume[1]))
+        checked_at = _now()
+
+        def store() -> None:
+            with self._transaction():
+                self._set_meta("last_update_at", checked_at)
+                self._set_meta("last_remote_total", str(remote_total))
+                if resume is None:
+                    self._conn.execute(
+                        "DELETE FROM meta WHERE key IN ('resume_start', 'resume_page')"
+                    )
+                else:
+                    self._set_meta("resume_start", resume[0] or "")
+                    self._set_meta("resume_page", str(resume[1]))
+
+        self._run(VEHICLES, store)
 
     def meta(self) -> IndexMeta:
         built_at = self._get_meta("built_at")

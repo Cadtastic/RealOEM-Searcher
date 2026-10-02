@@ -41,7 +41,7 @@ def get_index(services: Services) -> VehicleIndex:
     """The process-wide VehicleIndex, opened on first use (Services.aclose closes it)."""
     index = services.extras.get(INDEX_KEY)
     if index is None:
-        index = VehicleIndex.open(services.settings, services.brands)
+        index = VehicleIndex.open(services.settings, services.brands, run=services.run_storage)
         services.extras[INDEX_KEY] = index
     return index
 
