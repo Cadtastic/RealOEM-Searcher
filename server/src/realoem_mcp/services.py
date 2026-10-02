@@ -15,6 +15,7 @@ from realoem_mcp.brands import BrandRegistry
 from realoem_mcp.cache import PageCache
 from realoem_mcp.config import Settings
 from realoem_mcp.http_client import Admit, Charge, Owner, RealOemClient
+from realoem_mcp.storage_guard import Runner, run_directly
 
 
 @dataclass
@@ -24,6 +25,7 @@ class Services:
     client: RealOemClient
     brands: BrandRegistry
     extras: dict[str, Any] = field(default_factory=dict)  # branch-owned singletons
+    run_storage: Runner = run_directly  # hosted server: the storage guard (storage_guard.py)
 
     async def aclose(self) -> None:
         """Close every extra, then the client, then the cache; re-raise the first error.
