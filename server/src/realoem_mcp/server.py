@@ -7,6 +7,8 @@ import importlib
 import logging
 import pkgutil
 import sys
+from collections.abc import Sequence
+from typing import TYPE_CHECKING, Any
 
 from mcp.server.mcpserver import MCPServer
 
@@ -14,6 +16,11 @@ import realoem_mcp.tools
 from realoem_mcp import __version__
 from realoem_mcp.config import Settings
 from realoem_mcp.services import Services, create_services
+
+if TYPE_CHECKING:
+    from mcp.server.auth.provider import OAuthAuthorizationServerProvider
+    from mcp.server.auth.settings import AuthSettings
+    from mcp.server.context import ServerMiddleware
 
 log = logging.getLogger(__name__)
 
@@ -24,8 +31,23 @@ INSTRUCTIONS = (
 )
 
 
-def build_server(services: Services) -> MCPServer:
-    app = MCPServer("realoem", instructions=INSTRUCTIONS, version=__version__)
+def build_server(
+    services: Services,
+    *,
+    auth_server_provider: OAuthAuthorizationServerProvider[Any, Any, Any] | None = None,
+    auth: AuthSettings | None = None,
+    middleware: Sequence[ServerMiddleware[Any]] | None = None,
+) -> MCPServer:
+    """The MCP server with every tool registered. The keyword arguments are for the hosted
+    (HTTP) server; the stdio server passes none of them."""
+    app = MCPServer(
+        "realoem",
+        instructions=INSTRUCTIONS,
+        version=__version__,
+        auth_server_provider=auth_server_provider,
+        auth=auth,
+        middleware=middleware,
+    )
     package = realoem_mcp.tools
     for module_info in pkgutil.iter_modules(package.__path__):
         try:

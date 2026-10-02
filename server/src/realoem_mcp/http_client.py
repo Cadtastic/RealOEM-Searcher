@@ -8,18 +8,25 @@ import math
 import re
 import time
 from collections.abc import Awaitable, Callable, Mapping
+from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from email.utils import parsedate_to_datetime
 from http.cookiejar import Cookie, CookieJar, DefaultCookiePolicy
 from typing import TYPE_CHECKING
-from urllib.parse import quote, urlencode, urlsplit
+from urllib.parse import parse_qsl, quote, urlencode, urlsplit, urlunsplit
 from urllib.request import Request
 
 import httpx
 
 from realoem_mcp.config import Settings
-from realoem_mcp.errors import BotChallenge, LayoutChanged, UpstreamError
+from realoem_mcp.errors import (
+    BotChallenge,
+    Busy,
+    CallDeadline,
+    LayoutChanged,
+    UpstreamError,
+)
 from realoem_mcp.page_types import PageType
 
 if TYPE_CHECKING:
@@ -33,6 +40,9 @@ RETRY_DELAYS_S = (5.0, 15.0)
 MAX_RETRIES = len(RETRY_DELAYS_S)
 RETRY_AFTER_CAP_S = 30.0
 CHALLENGE_TITLE = "<title>Just a moment...</title>"
+OWNER_SCOPED_TTL = timedelta(days=30)  # hosted: a user's own (VIN) pages
+REFRESH_MIN_AGE = timedelta(hours=1)  # hosted: refresh=true is ignored for newer copies
+PRIVATE_PAGE_TYPES = (PageType.SELECT, PageType.PRODUCTION)  # URLs that can carry a VIN
 _PATH_RE = re.compile(r"[a-z]+")
 _PAGE_TYPE = "realoem_page_type"  # request extension keys (httpx keeps them across redirects)
 _STARTED = "realoem_started"
@@ -47,12 +57,33 @@ class Page:
     html: str
     fetched_at: datetime  # UTC
     from_cache: bool
+    owner: str = ""  # "" = shared; otherwise the per-user cache owner key (hosted design 4.8)
 
     @property
     def redirected_away(self) -> bool:
         """True when RealOEM redirected to another page (e.g. /bmw/ for an invalid id)."""
         requested = urlsplit(self.url).path.rstrip("/").rsplit("/", 1)[-1]
         return not urlsplit(self.final_url).path.rstrip("/").endswith("/" + requested)
+
+
+@dataclass(frozen=True)
+class Admission:
+    """What the hosted server's gate grants a cache-miss fetch (hosted design 4.7)."""
+
+    wait_s: float  # how long the fetch may wait for its turn
+    deadline_bound: bool  # True when the call deadline, not the queue limit, set wait_s
+
+
+Admit = Callable[[], AbstractAsyncContextManager[Admission]]
+Charge = Callable[[], None]
+Owner = Callable[[PageType, Mapping[str, str]], str]
+
+
+def masked(url: str) -> str:
+    """The URL with every query value replaced by ***, for logs that must not carry a VIN."""
+    parts = urlsplit(url)
+    query = "&".join(f"{key}=***" for key, _ in parse_qsl(parts.query, keep_blank_values=True))
+    return urlunsplit(parts._replace(query=query))
 
 
 def build_url(settings: Settings, path: str, params: Mapping[str, str]) -> str:
@@ -96,9 +127,16 @@ class RealOemClient:
         transport: httpx.AsyncBaseTransport | None = None,
         clock: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+        admit: Admit | None = None,
+        charge: Charge | None = None,
+        owner: Owner | None = None,
     ) -> None:
         self._settings = settings
+        self._hosted = settings.mode == "http"
         self._cache = cache
+        self._admit = admit  # hosted: queue admission, entered before waiting for the lock
+        self._charge = charge  # hosted: counts one cache-miss fetch against the caller's quota
+        self._owner = owner  # hosted: the cache owner of a page ("" = shared)
         self._clock = clock
         self._sleep = sleep
         self._lock = asyncio.Lock()
@@ -124,8 +162,34 @@ class RealOemClient:
 
     def cached(self, page_type: PageType, path: str, params: Mapping[str, str]) -> Page | None:
         """Cache-only lookup: an unexpired hit or None. Never touches the network."""
-        page = self._cache.get(self.build_url(path, params))
+        page = self._cache.get(
+            self.build_url(path, params), owner=self._owner_of(page_type, params)
+        )
         return page if page is not None and page.page_type == page_type else None
+
+    def _owner_of(self, page_type: PageType, params: Mapping[str, str]) -> str:
+        return self._owner(page_type, params) if self._owner is not None else ""
+
+    def _log_url(self, page_type: PageType | str, url: str) -> str:
+        return masked(url) if self._hosted and page_type in PRIVATE_PAGE_TYPES else url
+
+    def _cached_answer(
+        self, page_type: PageType, url: str, owner: str, refresh: bool
+    ) -> Page | None:
+        """The cached page that answers this fetch, if any.
+
+        In hosted mode refresh=true is honoured only for copies older than REFRESH_MIN_AGE, so
+        one user cannot make the shared server refetch a page over and over.
+        """
+        if refresh and not self._hosted:
+            return None
+        hit = self._cache.get(url, owner=owner)
+        if hit is None:
+            return None
+        if refresh and datetime.now(UTC) - hit.fetched_at >= REFRESH_MIN_AGE:
+            return None
+        log.info("%s %s cache hit", page_type.value, self._log_url(page_type, url))
+        return hit
 
     async def fetch(
         self,
@@ -141,31 +205,68 @@ class RealOemClient:
         A same-host redirect is returned as a redirected page (never cached) regardless of the
         final status; callers turn redirected-away pages into NotFound. Other non-200 responses
         raise UpstreamError.
+
+        On the hosted server a cache miss is first admitted by the gate (which may raise
+        QuotaExceeded, CallDeadline or Busy), then waits for its turn at most as long as the
+        admission allows (Busy or CallDeadline), then is charged to the caller (QuotaExceeded)
+        only if the page is still not cached once its turn comes. Cache hits, retries and
+        redirect hops are free; the admission is held until the response has arrived. VIN pages
+        are cached for their owner only, and refresh=true is honoured only for copies older than
+        an hour.
         """
         url = self.build_url(path, params)
-        if not refresh and (hit := self._cache.get(url)) is not None:
-            log.info("%s %s cache hit", page_type.value, url)
+        owner = self._owner_of(page_type, params)
+        if (hit := self._cached_answer(page_type, url, owner, refresh)) is not None:
             return hit
-        async with self._lock:
-            if not refresh and (hit := self._cache.get(url)) is not None:
-                log.info("%s %s cache hit", page_type.value, url)
-                return hit
-            response = await self._get_with_retries(page_type, url)
-            page = Page(
-                page_type=page_type,
-                url=url,
-                final_url=str(response.url),
-                status=response.status_code,
-                html=response.text,
-                fetched_at=datetime.now(UTC),
-                from_cache=False,
-            )
-            if page.redirected_away:
-                return page
-            if page.status != 200:
-                raise UpstreamError(page.status, url)
-            self._cache.put(page, ttl if ttl is not None else page_type.ttl)
+        if self._admit is None:
+            async with self._lock:
+                return await self._fetch_locked(page_type, url, owner, refresh=refresh, ttl=ttl)
+        async with self._admit() as admission:
+            await self._acquire(admission)
+            try:
+                return await self._fetch_locked(page_type, url, owner, refresh=refresh, ttl=ttl)
+            finally:
+                self._lock.release()
+
+    async def _acquire(self, admission: Admission) -> None:
+        """Take the request lock, waiting at most admission.wait_s for a turn."""
+        try:
+            # asyncio.timeout, not wait_for: on Python 3.11 wait_for can leak the lock when the
+            # task is cancelled just as the acquire completes.
+            async with asyncio.timeout(admission.wait_s):
+                await self._lock.acquire()
+        except TimeoutError:
+            raise (CallDeadline() if admission.deadline_bound else Busy()) from None
+
+    async def _fetch_locked(
+        self, page_type: PageType, url: str, owner: str, *, refresh: bool, ttl: timedelta | None
+    ) -> Page:
+        """The network fetch; the caller holds the request lock."""
+        # Another call may have fetched the page while this one waited for the lock.
+        if (hit := self._cached_answer(page_type, url, owner, refresh)) is not None:
+            return hit
+        if self._charge is not None:
+            self._charge()  # raises QuotaExceeded before anything is sent
+        response = await self._get_with_retries(page_type, url)
+        page = Page(
+            page_type=page_type,
+            url=url,
+            final_url=str(response.url),
+            status=response.status_code,
+            html=response.text,
+            fetched_at=datetime.now(UTC),
+            from_cache=False,
+            owner=owner,
+        )
+        if page.redirected_away:
             return page
+        if page.status != 200:
+            raise UpstreamError(page.status, url)
+        lifetime = ttl if ttl is not None else page_type.ttl
+        if owner:
+            lifetime = min(lifetime, OWNER_SCOPED_TTL)
+        self._cache.put(page, lifetime)
+        return page
 
     async def _get_with_retries(self, page_type: PageType, url: str) -> httpx.Response:
         attempt = 0
@@ -179,7 +280,11 @@ class RealOemClient:
                 attempt += 1
                 continue
             except _OffsiteRedirect as exc:
-                log.warning("refused off-site redirect from %s to %s", url, exc.target)
+                log.warning(
+                    "refused off-site redirect from %s to %s",
+                    self._log_url(page_type, url),
+                    self._log_url(page_type, exc.target),
+                )
                 raise UpstreamError(None, url, f"redirected off-site to {exc.target}") from None
             except httpx.RequestError as exc:  # network, decoding, too many redirects
                 raise UpstreamError(None, url, type(exc).__name__) from None
@@ -200,7 +305,12 @@ class RealOemClient:
         try:
             return await self._http.get(url, extensions={_PAGE_TYPE: page_type.value})
         except httpx.RequestError as exc:
-            log.info("%s %s failed: %s (cache miss)", page_type.value, url, type(exc).__name__)
+            log.info(
+                "%s %s failed: %s (cache miss)",
+                page_type.value,
+                self._log_url(page_type, url),
+                type(exc).__name__,
+            )
             raise
 
     async def _on_request(self, request: httpx.Request) -> None:
@@ -219,10 +329,11 @@ class RealOemClient:
     async def _on_response(self, response: httpx.Response) -> None:
         request = response.request
         elapsed_ms = (time.perf_counter() - request.extensions[_STARTED]) * 1000
+        page_type = request.extensions.get(_PAGE_TYPE, "?")
         log.info(
             "%s %s -> %d in %.0f ms (cache miss)",
-            request.extensions.get(_PAGE_TYPE, "?"),
-            request.url,
+            page_type,
+            self._log_url(page_type, str(request.url)),
             response.status_code,
             elapsed_ms,
         )

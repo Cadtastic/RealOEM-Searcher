@@ -44,3 +44,37 @@ class UpstreamError(RealOemError):
         self.detail = detail
         reason = f"HTTP {status}" if status is not None else (detail or "a network error")
         super().__init__(f"RealOEM request failed ({reason}) for {url}. Try again later.")
+
+
+class QuotaExceeded(RealOemError):
+    """The caller (or, with server_wide, the whole server) used up the day's RealOEM requests."""
+
+    def __init__(self, limit: int, *, server_wide: bool = False) -> None:
+        self.limit = limit
+        self.server_wide = server_wide
+        if server_wide:
+            message = (
+                "RealOEM Searcher has reached its daily request limit; try again after 00:00 UTC."
+            )
+        else:
+            message = (
+                f"You've used your {limit} RealOEM lookups for today; the limit resets at "
+                "00:00 UTC. Cached results remain available."
+            )
+        super().__init__(message)
+
+
+class Busy(RealOemError):
+    """Too many requests are already waiting for RealOEM; nothing was charged."""
+
+    def __init__(self) -> None:
+        super().__init__("RealOEM Searcher is busy; try again in a minute.")
+
+
+class CallDeadline(RealOemError):
+    """The tool call ran out of time before it could make its next RealOEM request."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "This call took too long; call again to continue (pages already fetched are cached)."
+        )

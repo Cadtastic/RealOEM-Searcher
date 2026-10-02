@@ -125,7 +125,7 @@ async def _decode(
     with _expire_if_unparseable(services, page):
         select = parse_select(page.html, url=page.url)
         if select.vehicle_id is None or select.type_code is None:
-            services.cache.shorten(page.url, VIN_MISS_TTL)
+            services.cache.shorten(page.url, VIN_MISS_TTL, owner=page.owner)
             return VinDecodeResult.from_pages(
                 [page],
                 serial=vin.serial,
@@ -155,7 +155,7 @@ async def _decode(
         with _expire_if_unparseable(services, production_page):
             matches = parse_production(production_page.html, url=production_page.url)
         if not matches:
-            services.cache.shorten(production_page.url, VIN_MISS_TTL)
+            services.cache.shorten(production_page.url, VIN_MISS_TTL, owner=production_page.owner)
         production, notes = pick_production(matches, vin.serial, select.type_code)
         warnings.extend(notes)
     return VinDecodeResult.from_pages(
@@ -182,7 +182,7 @@ def _expire_if_unparseable(services: Services, page: Page) -> Iterator[None]:
     try:
         yield
     except LayoutChanged:
-        services.cache.shorten(page.url, EXPIRE_NOW)
+        services.cache.shorten(page.url, EXPIRE_NOW, owner=page.owner)
         raise
 
 

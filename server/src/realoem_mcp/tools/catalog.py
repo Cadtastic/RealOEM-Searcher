@@ -177,7 +177,7 @@ async def fetch_diagram_list(
             dedupe_names=brand.dedupe_repeated_names,
         )
     if not subgroups:
-        services.cache.shorten(page.url, MISSING_GROUP_TTL)
+        services.cache.shorten(page.url, MISSING_GROUP_TTL, owner=page.owner)
         raise NotFound(
             f"vehicle {vid} has no main group {main_group}; list_part_groups shows the ones it has."
         )
@@ -318,5 +318,5 @@ def _expire_if_unparseable(services: Services, page: Page) -> Iterator[None]:
     try:
         yield
     except LayoutChanged:
-        services.cache.shorten(page.url, EXPIRE_NOW)
+        services.cache.shorten(page.url, EXPIRE_NOW, owner=page.owner)
         raise

@@ -28,6 +28,8 @@ and stored on this computer. Searching it is free: `find_vehicle` never contacts
      previous call stopped.
    - `drift`: RealOEM changed older entries. Report the `message`: the maintainer should rebuild
      the index. The vehicles found so far were still added.
+   - `cooldown`: the shared index was already checked less than an hour ago, so nothing was
+     fetched. Treat it like `up_to_date`.
    Call `update_vehicle_index` at most once per conversation unless it returned `partial` or the
    user asks again.
    If `index.built_at` is null, no vehicle index baseline is installed: `update_vehicle_index`

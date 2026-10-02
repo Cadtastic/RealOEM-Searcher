@@ -36,6 +36,7 @@ def test_body_explains_the_workflow_and_its_limits() -> None:
         "`updated`",
         "`partial`",
         "`drift`",
+        "`cooldown`",
         "production START month",
         '"as of `built_at`"',
         "`select_vehicle`",

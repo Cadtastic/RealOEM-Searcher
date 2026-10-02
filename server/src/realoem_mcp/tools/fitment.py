@@ -11,7 +11,14 @@ from urllib.parse import parse_qs, urlsplit
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 
-from realoem_mcp.errors import InvalidInput, LayoutChanged, NotFound, RealOemError
+from realoem_mcp.errors import (
+    Busy,
+    CallDeadline,
+    InvalidInput,
+    LayoutChanged,
+    NotFound,
+    RealOemError,
+)
 from realoem_mcp.http_client import Page
 from realoem_mcp.models.catalog import DiagramListResult, PartRow
 from realoem_mcp.models.fitment import (
@@ -61,7 +68,8 @@ async def check(
             page.html, url=page.url, client=services.client, vehicle_id=str(vid)
         )
     except LayoutChanged:
-        services.cache.shorten(page.url, EXPIRE_NOW)  # never keep a page we cannot parse
+        # Never keep a page we cannot parse.
+        services.cache.shorten(page.url, EXPIRE_NOW, owner=page.owner)
         raise
     if search is None or not matches(query, search.part_number):
         raise _unknown_part(query)
@@ -180,7 +188,10 @@ async def compare(
 
     Budget = network requests (cached pages are free). Both diagram lists come first, then the
     in-scope diagrams alternating A/B in list order; once the budget is spent the rest are read
-    from the cache only, and cache misses are reported as unfetched.
+    from the cache only, and cache misses are reported as unfetched. On the hosted server a call
+    that runs out of time (CallDeadline) or finds the queue full (Busy) while reading diagrams
+    ends the same way, so the diagrams already compared are never lost; during the two diagram
+    lists it is a tool error, since there is nothing to compare without both.
     """
     ids = [str(_vehicle_id(services, raw)) for raw in (vehicle_a, vehicle_b)]
     diag_ids = _check_scope(main_group, subgroup, diag_ids, max_requests)
@@ -199,14 +210,19 @@ async def compare(
         )
     a, b = (_side(diagrams, subgroup, diag_ids) for diagrams in lists)
     used = sum(not page.from_cache for page in pages)
+    network_open = True
     for side, diag_id in _alternate(a, b):
-        fetched = await fetch_diagram_parts(
-            services,
-            side.vehicle_id,
-            diag_id,
-            refresh=refresh,
-            cache_only=used >= max_requests,
-        )
+        try:
+            fetched = await fetch_diagram_parts(
+                services,
+                side.vehicle_id,
+                diag_id,
+                refresh=refresh,
+                cache_only=not network_open or used >= max_requests,
+            )
+        except (Busy, CallDeadline):
+            network_open = False  # like a spent budget: finish from the cache
+            fetched = await fetch_diagram_parts(services, side.vehicle_id, diag_id, cache_only=True)
         if fetched is None:
             side.unfetched.append(diag_id)
             continue

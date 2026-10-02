@@ -48,7 +48,8 @@ async def fetch_part_xref(
     try:
         xref = _parse(services, page, narrowed="series" in params)
     except LayoutChanged:
-        services.cache.shorten(page.url, timedelta(0))  # never keep a page we cannot parse
+        # Never keep a page we cannot parse.
+        services.cache.shorten(page.url, timedelta(0), owner=page.owner)
         raise
     if xref is None or not matches(query, xref.part_number):
         return None, page
