@@ -17,6 +17,7 @@ from realoem_mcp.errors import (
     InvalidInput,
     LayoutChanged,
     NotFound,
+    QuotaExceeded,
     RealOemError,
 )
 from realoem_mcp.http_client import Page
@@ -189,14 +190,17 @@ async def compare(
     Budget = network requests (cached pages are free). Both diagram lists come first, then the
     in-scope diagrams alternating A/B in list order; once the budget is spent the rest are read
     from the cache only, and cache misses are reported as unfetched. On the hosted server a call
-    that runs out of time (CallDeadline) or finds the queue full (Busy) while reading diagrams
-    ends the same way, so the diagrams already compared are never lost; during the two diagram
-    lists it is a tool error, since there is nothing to compare without both.
+    that runs out of time (CallDeadline), finds the queue full (Busy) or reaches the daily limit
+    (QuotaExceeded) while reading diagrams ends the same way, with the message in
+    stopped_reason, so the diagrams already compared (and the cached ones) are never lost;
+    during the two diagram lists it is a tool error, since there is nothing to compare without
+    both.
     """
     ids = [str(_vehicle_id(services, raw)) for raw in (vehicle_a, vehicle_b)]
     diag_ids = _check_scope(main_group, subgroup, diag_ids, max_requests)
     pages: list[Page] = []
     lists: list[DiagramListResult] = []
+    stopped_reason: str | None = None
     for vehicle_id in ids:
         diagrams, page = await fetch_diagram_list(services, vehicle_id, main_group, refresh=refresh)
         lists.append(diagrams)
@@ -220,8 +224,9 @@ async def compare(
                 refresh=refresh,
                 cache_only=not network_open or used >= max_requests,
             )
-        except (Busy, CallDeadline):
+        except (Busy, CallDeadline, QuotaExceeded) as err:
             network_open = False  # like a spent budget: finish from the cache
+            stopped_reason = err.message
             fetched = await fetch_diagram_parts(services, side.vehicle_id, diag_id, cache_only=True)
         if fetched is None:
             side.unfetched.append(diag_id)
@@ -230,9 +235,8 @@ async def compare(
         pages.append(page)
         used += not page.from_cache
         side.rows[diag_id] = parts.rows
-    return _result(
-        pages, a, b, CompareScope(main_group=main_group, subgroup=subgroup, diag_ids=diag_ids)
-    )
+    scope = CompareScope(main_group=main_group, subgroup=subgroup, diag_ids=diag_ids)
+    return _result(pages, a, b, scope, stopped_reason)
 
 
 def _alternate(a: _Side, b: _Side) -> list[tuple[_Side, str]]:
@@ -241,7 +245,9 @@ def _alternate(a: _Side, b: _Side) -> list[tuple[_Side, str]]:
     return [item for item in chain.from_iterable(pairs) if item is not None]
 
 
-def _result(pages: list[Page], a: _Side, b: _Side, scope: CompareScope) -> ComparisonResult:
+def _result(
+    pages: list[Page], a: _Side, b: _Side, scope: CompareScope, stopped_reason: str | None
+) -> ComparisonResult:
     parts_a, parts_b = a.parts(), b.parts()
     in_both = [
         PartComparison(
@@ -264,6 +270,7 @@ def _result(pages: list[Page], a: _Side, b: _Side, scope: CompareScope) -> Compa
         unfetched_b=b.unfetched,
         ignored_diag_ids_a=a.ignored,
         ignored_diag_ids_b=b.ignored,
+        stopped_reason=stopped_reason,
     )
 
 
@@ -320,7 +327,9 @@ def register(app: MCPServer, services: Services) -> None:
         2 requests for the diagram lists plus one per diagram; max_requests (2-60, default
         20) caps network requests, cached pages are free. complete=false means unfetched_a/b
         diagrams were not read: say the result is partial; calling again with the same
-        arguments continues from the cache. Cite source_urls. refresh=true ignores the cache.
+        arguments continues from the cache. stopped_reason, when set, says why the call stopped
+        fetching early (busy, out of time, or the daily limit): pass it on. Cite source_urls.
+        refresh=true ignores the cache.
         """
         try:
             return await compare(

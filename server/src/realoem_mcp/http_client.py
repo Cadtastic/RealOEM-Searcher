@@ -20,6 +20,7 @@ from urllib.request import Request
 import httpx
 
 from realoem_mcp.config import Settings
+from realoem_mcp.current_user import time_left
 from realoem_mcp.errors import (
     BotChallenge,
     Busy,
@@ -210,7 +211,8 @@ class RealOemClient:
         QuotaExceeded, CallDeadline or Busy), then waits for its turn at most as long as the
         admission allows (Busy or CallDeadline), then is charged to the caller (QuotaExceeded)
         only if the page is still not cached once its turn comes. Cache hits, retries and
-        redirect hops are free; the admission is held until the response has arrived. VIN pages
+        redirect hops are free, and no retry starts past the call's deadline (CallDeadline); the
+        admission is held until the response has arrived. VIN pages
         are cached for their owner only, and refresh=true is honoured only for copies older than
         an hour.
         """
@@ -276,7 +278,7 @@ class RealOemClient:
             except httpx.TimeoutException:
                 if attempt >= MAX_RETRIES:
                     raise UpstreamError(None, url, "timed out") from None
-                await self._sleep(RETRY_DELAYS_S[attempt])
+                await self._wait_to_retry(RETRY_DELAYS_S[attempt])
                 attempt += 1
                 continue
             except _OffsiteRedirect as exc:
@@ -293,13 +295,22 @@ class RealOemClient:
             if response.status_code == 429 or response.status_code >= 500:
                 if attempt >= MAX_RETRIES:
                     raise UpstreamError(response.status_code, url)
-                await self._sleep(_retry_delay(response, attempt))
+                await self._wait_to_retry(_retry_delay(response, attempt))
                 attempt += 1
                 continue
             ui = response.headers.get("X-RO-UI")
             if ui is not None and not ui.startswith("v2"):
                 raise LayoutChanged(page_type, f"X-RO-UI is {ui!r}, expected v2", url)
             return response
+
+    async def _wait_to_retry(self, delay: float) -> None:
+        """Sleep before a retry. On the hosted server a retry that could not start before the
+        tool call's deadline is not made: CallDeadline instead (the failed attempt stays charged).
+        """
+        left = time_left(self._settings, self._clock) if self._hosted else None
+        if left is not None and delay >= left:
+            raise CallDeadline()
+        await self._sleep(delay)
 
     async def _send(self, page_type: PageType, url: str) -> httpx.Response:
         try:

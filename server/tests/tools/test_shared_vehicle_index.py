@@ -154,16 +154,32 @@ async def test_the_cooldown_ends_after_an_hour(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     rows = numbered(120)
+    start = datetime(2026, 10, 1, 12, 0, tzinfo=UTC)
+    now = [start]
+    monkeypatch.setattr(vehicles, "_now", lambda: now[0])
+    real_update = vehicles.update_index
+    runs: list[datetime] = []
+
+    async def counted(services, max_pages: int):
+        runs.append(now[0])
+        return await real_update(services, max_pages)
+
+    monkeypatch.setattr(vehicles, "update_index", counted)
     async with shared_services(tmp_path, SyntheticIndex(rows), settings=_index_settings(rows)) as (
         shared,
         _,
     ):
+        state = shared.services.extras.setdefault(UPDATE_STATE_KEY, _UpdateState())
         with signed_in("github:1"):
             assert (await update_index_shared(shared.services, 5)).status == "up_to_date"
+            now[0] = start + timedelta(minutes=59)
             assert (await update_index_shared(shared.services, 5)).status == "cooldown"
-            later = datetime.now(UTC) + timedelta(minutes=61)
-            monkeypatch.setattr(vehicles, "_now", lambda: later)
+            now[0] = start + timedelta(minutes=61)
             assert (await update_index_shared(shared.services, 5)).status == "up_to_date"
+            assert runs == [start, start + timedelta(minutes=61)]  # a real check, not cooldown
+            assert state.checked_at == start + timedelta(minutes=61)  # a new hour starts
+            now[0] = start + timedelta(minutes=62)
+            assert (await update_index_shared(shared.services, 5)).status == "cooldown"
 
 
 async def test_drift_starts_no_cooldown(tmp_path: Path) -> None:

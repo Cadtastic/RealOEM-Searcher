@@ -96,6 +96,7 @@ async def test_complete_comparison_across_different_diagrams(make_services: Make
         "diag_ids": ["11_3733", "11_3910"],
     }
     assert (data["complete"], data["unfetched_a"], data["unfetched_b"]) == (True, [], [])
+    assert data["stopped_reason"] is None
     assert (data["ignored_diag_ids_a"], data["ignored_diag_ids_b"]) == (["11_3910"], ["11_3733"])
     assert data["in_both"] == [
         {
@@ -257,7 +258,7 @@ async def test_budget_spent_on_the_diagram_lists(make_services: MakeServices) ->
     data = await _data(
         services, vehicle_a=E90, vehicle_b=E90_0806, main_group="11", subgroup="10", max_requests=2
     )
-    assert data["complete"] is False
+    assert (data["complete"], data["stopped_reason"]) == (False, None)  # the budget, not a stop
     assert (data["unfetched_a"], data["unfetched_b"]) == (SUBGROUP_10, SUBGROUP_10)
     assert (data["in_both"], data["only_a"], data["only_b"]) == ([], [], [])
     assert data["requests_made"] == 2

@@ -68,6 +68,7 @@ def test_comparison_models_have_the_ard_fields_in_order() -> None:
         "unfetched_b",
         "ignored_diag_ids_a",
         "ignored_diag_ids_b",
+        "stopped_reason",
     ]
     assert list(CompareScope.model_fields) == ["main_group", "subgroup", "diag_ids"]
     assert list(PartComparison.model_fields) == ["part_number", "description", "qty_a", "qty_b"]
@@ -139,6 +140,7 @@ def test_comparison_result_counts_network_pages_only() -> None:
         unfetched_b=["11_3752"],
         ignored_diag_ids_a=[],
         ignored_diag_ids_b=[],
+        stopped_reason=None,
     )
     data = result.model_dump(mode="json")
     assert (data["from_cache"], data["requests_made"]) == (False, 1)

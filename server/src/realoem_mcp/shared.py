@@ -19,7 +19,7 @@ import httpx
 from realoem_mcp.config import Settings
 from realoem_mcp.current_user import require_user
 from realoem_mcp.gate import GATE_KEY, FetchGate
-from realoem_mcp.http_client import Owner
+from realoem_mcp.http_client import PRIVATE_PAGE_TYPES, Owner
 from realoem_mcp.page_types import PageType
 from realoem_mcp.quota import QUOTA_KEY, Quota
 from realoem_mcp.services import Services, create_services
@@ -41,8 +41,9 @@ def vin_page_owner(settings: Settings, owner_key: bytes) -> Owner:
     """
 
     def owner(page_type: PageType, params: Mapping[str, str]) -> str:
-        carries_vin = page_type is PageType.PRODUCTION or (
-            page_type is PageType.SELECT and "vin" in params
+        # == (through `in`), not `is`: a page type given as its plain string must match too.
+        carries_vin = page_type in PRIVATE_PAGE_TYPES and (
+            page_type == PageType.PRODUCTION or "vin" in params
         )
         if not carries_vin:
             return ""

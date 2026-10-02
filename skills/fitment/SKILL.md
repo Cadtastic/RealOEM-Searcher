@@ -60,7 +60,11 @@ models of one series). Use `check_fitment` only when the user names one vehicle.
    that were not read, and parts from those diagrams may be missing or show up as "only" on the
    other vehicle. Say so, and offer to continue: calling again with the same arguments continues
    from the cache and only fetches what is missing (or narrow the scope, or raise
-   `max_requests`).
+   `max_requests`). On the hosted server, `stopped_reason` says why the call stopped going to
+   RealOEM early (the server was busy, the call ran out of time or the daily limit was reached);
+   pass that on (after the daily limit, continuing has to wait until 00:00 UTC). When `complete`
+   is still true, nothing is missing, but with `refresh=true` some diagrams came from older
+   cached copies: say so.
 
 ## Rules
 
