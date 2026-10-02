@@ -28,6 +28,12 @@ def test_a_tag_deploys_after_the_offline_tests() -> None:
     setup = next(line for line in lines if "setup-flyctl@" in line)
     assert len(setup.split("@")[1].split()[0]) == 40  # pinned to a commit
     assert any(re.fullmatch(r"version: \d+\.\d+\.\d+", line) for line in lines)  # and flyctl
+    # The job that holds the deploy token runs only actions pinned to a commit, and keeps no git
+    # credentials on disk.
+    deploy_job = lines[lines.index("deploy:") :]
+    for uses in (line for line in deploy_job if "uses:" in line):
+        assert re.search(r"@[0-9a-f]{40}( #|$)", uses), uses
+    assert "persist-credentials: false" in deploy_job
     # Only a pushed v* tag deploys: no other trigger, and no branch filter.
     assert lines[lines.index("on:") + 1 : lines.index("permissions:")] == ["push:", 'tags: ["v*"]']
 
