@@ -77,6 +77,38 @@ async def test_compare_vehicles_keeps_its_partial_result_at_the_deadline(tmp_pat
         assert shared.quota.status("github:1").used_today == 4  # refused fetches cost nothing
 
 
+async def test_compare_vehicles_keeps_its_partial_result_when_a_retry_would_pass_the_deadline(
+    tmp_path: Path,
+) -> None:
+    clock = FakeClock()
+    routes = {
+        **COMPARE_ROUTES,
+        url("showparts", id=R56, diagId="11_3910"): Route(status=503),
+    }
+    async with shared_services(tmp_path, routes, clock=clock, call_deadline_s=10.0) as (
+        shared,
+        transport,
+    ):
+        app = build_server(shared.services, middleware=[CallClock(clock)])
+        async with Client(app) as client:
+            with signed_in("github:1"):
+                result = await client.call_tool("compare_vehicles", COMPARE)
+        assert result.is_error is False, result.content
+        data = result.structured_content
+        # Requests go out at t=0, 2, 4 and 6 s; B's diagram answers 503, and its first retry
+        # (5 s later) would start past the 10-second deadline, so it is not made.
+        assert (data["complete"], data["unfetched_a"], data["unfetched_b"]) == (
+            False,
+            [],
+            ["11_3910"],
+        )
+        assert data["stopped_reason"] == CallDeadline().message
+        assert len(transport.requests) == 4
+        assert shared.quota.status("github:1").used_today == 4  # the failed attempt counts
+        assert not shared.services.client._lock.locked()
+        assert shared.gate.waiting_or_in_flight == 0
+
+
 async def test_after_a_full_queue_compare_vehicles_reads_only_the_cache(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
