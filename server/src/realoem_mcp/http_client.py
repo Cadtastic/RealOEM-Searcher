@@ -47,6 +47,7 @@ class Page:
     html: str
     fetched_at: datetime  # UTC
     from_cache: bool
+    owner: str = ""  # "" = shared; otherwise the per-user cache owner key (hosted design 4.8)
 
     @property
     def redirected_away(self) -> bool:
