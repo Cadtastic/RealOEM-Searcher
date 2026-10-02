@@ -14,7 +14,7 @@ import httpx
 from realoem_mcp.brands import BrandRegistry
 from realoem_mcp.cache import PageCache
 from realoem_mcp.config import Settings
-from realoem_mcp.http_client import RealOemClient
+from realoem_mcp.http_client import Admit, Charge, Owner, RealOemClient
 
 
 @dataclass
@@ -54,9 +54,20 @@ def create_services(
     transport: httpx.AsyncBaseTransport | None = None,
     clock: Callable[[], float] | None = None,
     sleep: Callable[[float], Awaitable[None]] | None = None,
+    admit: Admit | None = None,
+    charge: Charge | None = None,
+    owner: Owner | None = None,
 ) -> Services:
+    """admit, charge and owner are the hosted server's client hooks (see shared.build_shared)."""
     brands = BrandRegistry.load(settings.brands_dir)
-    cache = PageCache(settings.cache_dir)
+    # Only non-zero limits are passed, so a PageCache stand-in that takes just cache_dir (as in
+    # tests/unit/test_services.py) keeps working; stdio has no limits unless REALOEM_CACHE_MAX_MB.
+    limits: dict[str, int] = {}
+    if settings.cache_max_bytes:
+        limits["max_bytes"] = settings.cache_max_bytes
+    if settings.cache_min_free_bytes:
+        limits["min_free_bytes"] = settings.cache_min_free_bytes
+    cache = PageCache(settings.cache_dir, **limits)
     try:
         client = RealOemClient(
             settings,
@@ -64,6 +75,9 @@ def create_services(
             transport=transport,
             clock=clock or time.monotonic,
             sleep=sleep or asyncio.sleep,
+            admit=admit,
+            charge=charge,
+            owner=owner,
         )
     except BaseException:
         cache.close()
