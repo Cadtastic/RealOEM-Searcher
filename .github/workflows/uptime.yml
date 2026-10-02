@@ -1,0 +1,23 @@
+name: Uptime
+
+# Checks the hosted server every 15 minutes (hosted design 4.10). A failed run emails the owner:
+# GitHub notifies the account that last changed this schedule. After 10 restarts in a crash loop
+# Fly leaves the machine stopped, and this check is how the owner finds out.
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  healthz:
+    name: GET /healthz
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: The server answers
+        run: >-
+          curl --fail --silent --show-error --max-time 10
+          --retry 3 --retry-delay 20 --retry-all-errors
+          https://realoem-searcher.fly.dev/healthz

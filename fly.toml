@@ -1,0 +1,53 @@
+# The hosted RealOEM Searcher server on Fly.io (hosted design H3, 4.10): one always-on machine with
+# one volume. Deploy from the repository root, always as one machine:
+#   flyctl deploy --ha=false
+app = "realoem-searcher"
+primary_region = "iad"
+
+[build]
+  dockerfile = "server/Dockerfile"
+
+[env]
+  REALOEM_PUBLIC_URL = "https://realoem-searcher.fly.dev"
+  REALOEM_CACHE_DIR = "/data/cache"
+  REALOEM_DATA_DIR = "/data/data"
+  REALOEM_BRANDS_DIR = "/app/brands"
+
+[[mounts]]
+  source = "realoem_data"
+  destination = "/data"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  # Always on. A crash loop that uses up the restarts below leaves the machine stopped, and
+  # neither a request nor a deploy starts it again, so the uptime check notices. Once the cause is
+  # fixed: fly machine start <id> --app realoem-searcher
+  auto_stop_machines = "off"
+  auto_start_machines = false
+  min_machines_running = 1
+
+  # A tool call answers with one JSON body at its end: up to the 50 s call limit plus one slow
+  # RealOEM response (20 s timeout, retried). Keep such a quiet connection open well past that.
+  [http_service.http_options]
+    idle_timeout = 180
+
+  [http_service.concurrency]
+    type = "requests"
+    soft_limit = 100
+    hard_limit = 200
+
+  [[http_service.checks]]
+    method = "GET"
+    path = "/healthz"
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "10s"
+
+[[restart]]
+  policy = "on-failure"
+  retries = 10
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"

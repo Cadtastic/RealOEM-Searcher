@@ -443,6 +443,12 @@ def test_a_tag_deploys_after_the_offline_tests() -> None:
     setup = next(line for line in lines if "setup-flyctl@" in line)
     assert len(setup.split("@")[1].split()[0]) == 40  # pinned to a commit
     assert any(re.fullmatch(r"version: \d+\.\d+\.\d+", line) for line in lines)  # and flyctl
+    # The job that holds the deploy token runs only actions pinned to a commit, and keeps no git
+    # credentials on disk.
+    deploy_job = lines[lines.index("deploy:") :]
+    for uses in (line for line in deploy_job if "uses:" in line):
+        assert re.search(r"@[0-9a-f]{40}( #|$)", uses), uses
+    assert "persist-credentials: false" in deploy_job
     # Only a pushed v* tag deploys: no other trigger, and no branch filter.
     assert lines[lines.index("on:") + 1 : lines.index("permissions:")] == ["push:", 'tags: ["v*"]']
 
@@ -506,7 +512,10 @@ jobs:
     # The environment holds FLY_API_TOKEN (an app-scoped deploy token) and requires a reviewer.
     environment: production
     steps:
-      - uses: actions/checkout@v7
+      # Pinned, and no git credentials left on disk: this job holds the deploy token.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1 # 1.6
         with:
           version: 0.4.111
@@ -1557,6 +1566,11 @@ fly ssh console -C "setpriv --reuid=app --regid=app --init-groups -- /app/server
 If the uptime check reports the server down and `fly status` shows its machine stopped, a crash
 loop used up Fly's restarts. Neither a request nor a deploy starts it again: fix the cause, deploy
 the fix, then run `fly machine start <machine id> --app realoem-searcher`.
+
+GitHub turns off a scheduled workflow after 60 days without activity in the repository, so in a
+quiet spell the uptime check stops without a word. GitHub emails a warning first; when it comes,
+or when the **Uptime** workflow shows as disabled under **Actions**, turn it back on there
+(**Enable workflow**) or with `gh workflow enable uptime.yml --repo Cadtastic/RealOEM-Searcher`.
 
 ## Development
 
