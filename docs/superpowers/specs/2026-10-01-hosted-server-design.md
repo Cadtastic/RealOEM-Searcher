@@ -240,9 +240,11 @@ which cache entry a page belongs to; see 4.8):
   daily request limit; try again after 00:00 UTC."
 - **Per-call deadline** (`REALOEM_CALL_DEADLINE_S`, 50, measured from `call_started_at`): once
   exceeded, `admit()` raises `CallDeadline(RealOemError)` instead of waiting. `compare_vehicles`
-  (`tools/fitment.py`) treats `CallDeadline` **and** `Busy` like an exhausted request budget: it
-  switches to cache-only reads and returns `complete=false` (resumable), never losing the pages it
-  already compared. Every other tool reports them as tool errors: "This call took too long; call
+  (`tools/fitment.py`) treats `CallDeadline`, `Busy` **and** `QuotaExceeded` (while reading
+  diagrams; during the two diagram lists they are tool errors) like an exhausted request budget: it
+  switches to cache-only reads and returns `complete=false` (resumable) with the error's message in
+  `stopped_reason`, never losing the pages it already compared or the ones already cached. Every
+  other tool reports them as tool errors: "This call took too long; call
   again to continue (pages already fetched are cached)." / the busy message. PRD NFR5 (< 5 s
   uncached) holds per request when the queue is empty.
 - `server_status` reports the caller's `quota: {used_today, limit, resets_at}` and `global_limit`

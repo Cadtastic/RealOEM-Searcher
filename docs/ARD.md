@@ -594,7 +594,9 @@ class PartRow(BaseModel):
   - Fields: `scope`, `complete: bool`, `in_both: list[PartComparison(part_number, description,
     qty_a: list[str], qty_b: list[str])]`, `only_a` / `only_b: list[PartSummary(part_number,
     description, qty: list[str], diag_ids: list[str])]`, `unfetched_a` / `unfetched_b: list[str]`
-    (diagIds not available within budget). Quantities are the raw `qty` strings, one per occurrence
+    (diagIds not available within budget), `stopped_reason: str | None` (hosted server only: the
+    busy, deadline or daily-limit message that stopped network reads before the budget did; else
+    `None`). Quantities are the raw `qty` strings, one per occurrence
     (row), so "quantity differences" are visible without guessing arithmetic.
   - `max_requests` counts **network requests only**; valid range 2–60, otherwise `InvalidInput`. Diagram
     lists are fetched first, then diagrams in list order alternating A/B. Once the budget is spent,

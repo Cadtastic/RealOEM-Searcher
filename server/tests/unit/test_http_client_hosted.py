@@ -12,6 +12,7 @@ import pytest
 
 from realoem_mcp.cache import PageCache
 from realoem_mcp.config import Settings
+from realoem_mcp.current_user import call_started_at
 from realoem_mcp.errors import Busy, CallDeadline, QuotaExceeded, UpstreamError
 from realoem_mcp.http_client import Admission, RealOemClient, masked
 from realoem_mcp.page_types import PageType
@@ -283,6 +284,33 @@ async def test_waiting_too_long_for_a_turn_fails_without_a_charge(
     assert (hooks.entered, hooks.exited) == (1, 1)
     page = await client.fetch(PageType.PARTXREF, "partxref", XREF_PARAMS)  # the lock is usable
     assert page.from_cache is False
+
+
+@pytest.mark.parametrize(
+    ("seconds_into_call", "sent"),
+    [(28.0, 3), (31.0, 2), (46.0, 1)],  # the retries wait 5 s, then 15 s; the deadline is 50 s
+    ids=["both-retries", "first-retry-only", "no-retry"],
+)
+async def test_no_retry_starts_past_the_call_deadline(
+    hosted, seconds_into_call: float, sent: int
+) -> None:
+    client, transport, hooks, _ = hosted({XREF: Route(status=503)})
+    clock = client._clock
+    started = call_started_at.set(clock.now - seconds_into_call)
+    try:
+        with pytest.raises(CallDeadline if sent < 3 else UpstreamError):
+            await client.fetch(PageType.PARTXREF, "partxref", XREF_PARAMS)
+    finally:
+        call_started_at.reset(started)
+    assert len(transport.requests) == sent
+    assert hooks.charged == ["alice"]  # the failed fetch counts once, as before
+
+
+async def test_retries_outside_a_tool_call_ignore_the_deadline(hosted) -> None:
+    client, transport, _, _ = hosted({XREF: Route(status=503)})
+    with pytest.raises(UpstreamError):
+        await client.fetch(PageType.PARTXREF, "partxref", XREF_PARAMS)
+    assert len(transport.requests) == 3
 
 
 async def test_a_free_lock_is_taken_even_with_no_time_to_wait(hosted) -> None:

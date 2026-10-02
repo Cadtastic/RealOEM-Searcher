@@ -106,6 +106,8 @@ def test_only_pages_that_carry_a_vin_are_owned_by_the_caller() -> None:
         assert owner(PageType.PRODUCTION, {"vin": "PX22770"}) == expected
         assert owner(PageType.SELECT, {"product": "P", "archive": "0"}) == ""  # the model cascade
         assert owner(PageType.PARTXREF, {"q": "11427953129"}) == ""
+        assert owner("production", {"vin": "PX22770"}) == expected  # type: ignore[arg-type]
+        assert owner("select", {"vin": "PX22770"}) == expected  # type: ignore[arg-type]
     with pytest.raises(RealOemError, match="not signed in"):
         owner(PageType.SELECT, {"vin": "PX22770"})
 

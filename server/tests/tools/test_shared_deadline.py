@@ -1,4 +1,4 @@
-"""The per-call deadline on the hosted server (design 4.7)."""
+"""The per-call deadline, the busy queue and the daily limit on the hosted server (design 4.7)."""
 
 from collections.abc import Callable, Mapping
 from pathlib import Path
@@ -9,7 +9,7 @@ from mcp import Client
 
 from realoem_mcp import gate
 from realoem_mcp.current_user import CallClock
-from realoem_mcp.errors import Busy
+from realoem_mcp.errors import Busy, CallDeadline, QuotaExceeded
 from realoem_mcp.page_types import PageType
 from realoem_mcp.server import build_server
 from tests.auth_helpers import signed_in
@@ -71,6 +71,7 @@ async def test_compare_vehicles_keeps_its_partial_result_at_the_deadline(tmp_pat
             [],
             ["11_3910"],
         )
+        assert data["stopped_reason"] == CallDeadline().message
         assert again.structured_content["complete"] is True  # resumed from the cache
         assert len(transport.requests) == 4  # the second call fetched only the missing diagram
         assert shared.quota.status("github:1").used_today == 4  # refused fetches cost nothing
@@ -99,6 +100,7 @@ async def test_after_a_full_queue_compare_vehicles_reads_only_the_cache(
             ["11_3733"],
             ["11_3910"],
         )
+        assert data["stopped_reason"] == Busy().message
         assert len(transport.requests) == 2
 
 
@@ -124,7 +126,36 @@ async def test_compare_vehicles_treats_a_full_queue_like_a_spent_budget(
             ["11_3733"],
             [],
         )
+        assert data["stopped_reason"] == Busy().message
         assert len(transport.requests) == 3
+
+
+async def test_compare_vehicles_at_the_daily_limit_still_returns_the_cached_diagrams(
+    tmp_path: Path,
+) -> None:
+    async with shared_services(tmp_path, COMPARE_ROUTES, user_daily_limit=3) as (
+        shared,
+        transport,
+    ):
+        services = shared.services
+        with signed_in("github:1"):  # both lists and A's diagram: the day's 3 requests
+            await services.client.fetch(PageType.PARTGRP, "partgrp", {"id": E90, "mg": "11"})
+            await services.client.fetch(PageType.PARTGRP, "partgrp", {"id": R56, "mg": "11"})
+            await services.client.fetch(
+                PageType.SHOWPARTS, "showparts", {"id": E90, "diagId": "11_3733"}
+            )
+        result = await call_tool(services, "github:1", "compare_vehicles", COMPARE)
+        assert result.is_error is False, result.content
+        data = result.structured_content
+        assert (data["complete"], data["unfetched_a"], data["unfetched_b"]) == (
+            False,
+            [],
+            ["11_3910"],
+        )
+        assert data["only_a"]  # A's cached diagram was compared
+        assert data["stopped_reason"] == QuotaExceeded(3).message
+        assert len(transport.requests) == 3
+        assert shared.quota.status("github:1").used_today == 3
 
 
 async def test_other_tools_report_the_deadline_as_an_error(tmp_path: Path) -> None:

@@ -47,7 +47,8 @@ def get_index(services: Services) -> VehicleIndex:
 
 
 async def _fetch(services: Services, number: int) -> Page:
-    """vehicles?page=<number>&sort=year, always from the network."""
+    """vehicles?page=<number>&sort=year from the network (refresh=true; on the hosted server a
+    copy younger than an hour is reused, see RealOemClient.fetch)."""
     return await services.client.fetch(
         PageType.VEHICLES, "vehicles", {"page": str(number), "sort": "year"}, refresh=True
     )
@@ -63,7 +64,7 @@ def _parse(services: Services, page: Page) -> VehicleIndexPage:
 
 
 async def fetch_vehicles_page(services: Services, number: int) -> tuple[VehicleIndexPage, Page]:
-    """Fetch and parse vehicles?page=<number>&sort=year, always from the network."""
+    """Fetch (as _fetch does) and parse vehicles?page=<number>&sort=year."""
     page = await _fetch(services, number)
     return _parse(services, page), page
 

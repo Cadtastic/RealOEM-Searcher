@@ -64,3 +64,6 @@ class ComparisonResult(ResultMeta):
     unfetched_b: list[str]
     ignored_diag_ids_a: list[str]  # requested diag_ids not in vehicle A's scope
     ignored_diag_ids_b: list[str]
+    # Hosted server: why the call stopped going to the network before max_requests (the busy,
+    # deadline or daily-limit message); None when it did not.
+    stopped_reason: str | None
