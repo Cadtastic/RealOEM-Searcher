@@ -24,9 +24,11 @@
     pushes a tag.
   - **(controller)**: the security review in Task 5, done by a reviewer the controller dispatches.
 - **Fly account safety.**
-  - `fly auth login` only for an owner step that needs it, and `fly auth logout` once that
-    sitting's flyctl work is done (at the latest after Task 11 Step 2, and again after every later
-    step that logs in), so no full-access Fly login stays on a machine where Claude runs commands.
+  - Every owner task that runs flyctl starts with `fly auth login` and ends with `fly auth
+    logout`: Tasks 7, 9, 10 and 11 (Step 2), and in Task 16 each step that runs flyctl, the
+    checks of the first week included. No full-access Fly login stays on a machine where Claude
+    runs commands. While logged in, the owner uses Claude Code sessions on that machine for MCP
+    calls only and refuses any shell command they propose.
   - Never `fly launch` (it writes its own `fly.toml` and can create resources; Tasks 2 and 7 do
     this by hand), `fly secrets set NAME=value` (the value lands in the shell history and any
     transcript; Task 7 imports the secrets from prompts), or `fly mcp server --claude` (it hands
@@ -46,7 +48,8 @@
   (`fly version` 0.4 or later).
 - TDD for the agent tasks: write the test, run it and see it fail for the stated reason, then
   implement and see it pass. The code blocks were run, task by task, on a clean worktree: with
-  every agent task applied the suite is `1263 passed, 6 deselected` and ruff is clean. Copy code
+  every agent task applied the suite is `1264 passed, 6 deselected` and ruff is clean (the totals
+  include the 6 tests the review follow-ups added after that run; plan 2's own tests are new files). Copy code
   exactly. Tasks 13 and 14 change documentation only and have no tests.
 - Commit messages are Conventional Commits, each ending with a blank line and a
   `Co-Authored-By:` trailer naming the model that wrote the change. The commit commands below show
@@ -94,7 +97,7 @@ cd .worktrees/hosted-deploy
 - [ ] **Step 2: Record the baseline**
 
 Run: `uv run --directory server pytest -q`
-Expected: `1257 passed, 6 deselected` (plans 1a and 1b merged). If not, stop and report.
+Expected: `1258 passed, 6 deselected` (plans 1a and 1b and their review follow-ups merged). If not, stop and report.
 
 ### Task 1: The container image (agent)
 
@@ -229,7 +232,7 @@ Expected: `2 passed`.
 - [ ] **Run the whole suite and the linters**
 
 Run: `uv run --directory server pytest -q`
-Expected: `1259 passed, 6 deselected`.
+Expected: `1260 passed, 6 deselected`.
 
 Run: `uv run --directory server ruff check && uv run --directory server ruff format --check`
 Expected: `All checks passed!` and every file already formatted.
@@ -375,7 +378,7 @@ Expected: `2 passed`.
 - [ ] **Run the whole suite and the linters**
 
 Run: `uv run --directory server pytest -q`
-Expected: `1261 passed, 6 deselected`.
+Expected: `1262 passed, 6 deselected`.
 
 Run: `uv run --directory server ruff check && uv run --directory server ruff format --check`
 Expected: `All checks passed!` and every file already formatted.
@@ -549,7 +552,7 @@ Expected: `2 passed`.
 - [ ] **Run the whole suite and the linters**
 
 Run: `uv run --directory server pytest -q`
-Expected: `1263 passed, 6 deselected`.
+Expected: `1264 passed, 6 deselected`.
 
 Run: `uv run --directory server ruff check && uv run --directory server ruff format --check`
 Expected: `All checks passed!` and every file already formatted.
@@ -566,7 +569,7 @@ git commit -m "ci: deploy on a v* tag after the offline tests, and an uptime che
 - [ ] **Step 1: Everything green**
 
 Run: `uv run --directory server pytest -q`
-Expected: `1263 passed, 6 deselected`.
+Expected: `1264 passed, 6 deselected`.
 
 Run: `uv run --directory server ruff check && uv run --directory server ruff format --check`
 Expected: `All checks passed!` and every file already formatted.
@@ -603,7 +606,7 @@ section 4.10). Merging deploys nothing: a deploy runs only on a v* tag, after th
 
 ## Test plan
 
-- [x] uv run pytest: 1263 passed, 6 deselected (6 new tests)
+- [x] uv run pytest: 1264 passed, 6 deselected (6 new tests)
 - [x] ruff check and ruff format --check
 - [ ] Owner: image built and run locally (plan 2, Task 8)
 - [ ] Owner: first deploy from this branch (plan 2, Task 9), then merge (Task 11)
@@ -728,7 +731,11 @@ fly secrets list --app realoem-searcher
 ````
 
 Expected: the four names, with digests but never values. Nobody needs the secret key again:
-changing it later signs every user out.
+changing it later signs every user out. Then sign flyctl out:
+
+````bash
+fly auth logout
+````
 
 ### Task 8: Build and run the image locally (owner)
 
@@ -826,13 +833,15 @@ Step 1.
 - [ ] **Step 1: Deploy**
 
 ````bash
+fly auth login
 fly deploy --app realoem-searcher --remote-only --ha=false
 ````
 
 Expected: Fly's builder builds the image, the machine starts, and the output ends with the app's
 URL, `https://realoem-searcher.fly.dev/`.
 
-- [ ] **Step 2: From outside** (the controller may run these when asked):
+- [ ] **Step 2: From outside** (the controller may run the `curl` lines when asked; the owner
+  runs `fly status`):
 
 ````bash
 fly status --app realoem-searcher
@@ -862,13 +871,16 @@ belong to uid 10001, and `/data/data` holds `auth.sqlite3`; the admin script pri
 `Auth database: /data/data/auth.sqlite3` and an empty usage table. If it prints
 `No auth database at …` instead, the SSH session lacks the app's environment: run it again with
 `env REALOEM_DATA_DIR=/data/data` before the Python path, and tell the controller, so Task 13 puts
-that form in the README.
+that form in the README. Then `fly auth logout`.
 
 ### Task 10: Checks against the live proxy (owner)
 
 Three questions spec section 10 leaves open are answered here, and the sign-in is tried from both
 kinds of client, before the plugin points at the server. Step 3 sends about 25 RealOEM requests
 (about 50 if it has to be repeated): the owner approves them at that step.
+
+The steps read `fly logs`: run `fly auth login` first (Step 6 logs out again). The Claude Code
+sessions below make MCP calls only; refuse any shell command they propose.
 
 - [ ] **Step 1: Sign in from Claude Code.** In the worktree of Task 0 (Step 6 removes the server
   there again):
@@ -898,8 +910,8 @@ Expected: `cache_path` null and your daily quota, and `POST /mcp 200 … github:
   no lookup is needed.) If Claude starts a second `compare_vehicles` call, stop it (Esc).
   Expected: after 50 to 75 seconds Claude Code gets a partial comparison (`complete` false,
   `stopped_reason` the time-limit message), and
-  `fly logs` shows `POST /mcp 200` with a duration of at least 50,000 ms (longer is fine: a
-  RealOEM retry near the end can add seconds). A shorter duration means
+  `fly logs` shows `POST /mcp 200` with a duration of at least 50,000 ms (longer is fine: a slow
+  RealOEM request already under way at the deadline can add seconds). A shorter duration means
   the call never reached the limit (its pages were already cached): repeat with main group 61
   (general vehicle electrical system, dozens of diagrams on both cars). If instead the call fails
   (a `502`, a timeout or a closed connection) while the log shows the request finishing later,
@@ -944,6 +956,7 @@ the server sees one address for everyone: stop, do not release, and tell the con
 
 ````bash
 claude mcp remove realoem-live
+fly auth logout
 ````
 
 and re-enable the 0.1.0 plugin if you disabled it. Whether Claude ever refreshes a token twice at
@@ -963,6 +976,7 @@ once (spec section 10) shows only over days of real use; Task 16 watches for it.
   checks that flyctl printed nothing but a token before it is stored.
 
 ````bash
+fly auth login
 TOKEN="$(fly tokens create deploy --app realoem-searcher --name github-actions-deploy --expiry 8760h)"
 case "$TOKEN" in
   "FlyV1 "*) printf '%s' "$TOKEN" | gh secret set FLY_API_TOKEN --env production --repo Cadtastic/RealOEM-Searcher ;;
@@ -976,7 +990,7 @@ Expected: `FLY_API_TOKEN` in the list. The token can deploy only this app and ex
 renew it the same way (a deploy after it expires fails with an authentication error). If the
 `case` reports unexpected output, a token was still created: find it with
 `fly tokens list --app realoem-searcher` and revoke it with `fly tokens revoke <id>` before
-trying again. The setup is done: sign flyctl out (see **Fly account safety**).
+trying again, then sign flyctl out:
 
 ````bash
 fly auth logout
@@ -1042,7 +1056,7 @@ cd .worktrees/release-0.2.0
 ````
 
 Run: `uv run --directory server pytest -q`
-Expected: `1263 passed, 6 deselected`. If not, stop and report.
+Expected: `1264 passed, 6 deselected`. If not, stop and report.
 
 - [ ] **Step 2: Change the tests first.** In `server/tests/unit/test_manifests.py`:
 
@@ -1255,7 +1269,7 @@ Expected: `4 passed`.
 - [ ] **Run the whole suite and the linters**
 
 Run: `uv run --directory server pytest -q`
-Expected: `1263 passed, 6 deselected`.
+Expected: `1264 passed, 6 deselected`.
 
 Run: `uv run --directory server ruff check && uv run --directory server ruff format --check`
 Expected: `All checks passed!` and every file already formatted.
@@ -2458,7 +2472,8 @@ Replace with:
    cache owner of a page; a cache miss enters `admit()` **before** waiting for the lock, then waits
    at most as long as the admission allows (`asyncio.timeout`; `Busy` or `CallDeadline`); `charge()`
    runs inside the lock after the second cache check misses, so a page another call fetched while
-   this one waited is free; `refresh=true` is honoured only for copies older than an hour; log
+   this one waited is free; no retry starts past the call deadline (`CallDeadline`; the failed
+   attempt stays charged); `refresh=true` is honoured only for copies older than an hour; log
    lines show `select` and `production` URLs with their query values masked.
 9. Two different counts: the client's process-wide `requests_made` (shown by `server_status`) counts
    **every HTTP request actually sent**, including retries, redirect hops, challenges and failures.
@@ -2715,7 +2730,8 @@ in short:
 - **Limits.** `quota.Quota` counts cache-miss fetches per user per UTC day (300; 30 for young GitHub
   accounts; an optional server-wide cap). `gate.FetchGate` admits a fetch to the queue only within
   the quota, the call deadline (`CallClock`, 50 s) and the queue limits (4 per user, 20 in all).
-  `compare_vehicles` turns `Busy` and `CallDeadline` into a resumable partial result;
+  `compare_vehicles` turns `Busy`, `CallDeadline` and `QuotaExceeded` into a resumable partial
+  result that names the reason in `stopped_reason`;
   `update_vehicle_index` runs one update at a time with a one-hour `cooldown`.
 - **Storage.** `storage_guard.StorageGuard` handles a full disk in the auth database or the vehicle
   index by deleting the disposable page cache and retrying once; a second full disk or a damaged
@@ -2796,7 +2812,7 @@ git commit -m "docs: ARD for the hosted server" -m "Co-Authored-By: Claude Sonne
 - [ ] **Step 1: Everything green**
 
 Run: `uv run --directory server pytest -q`
-Expected: `1263 passed, 6 deselected`.
+Expected: `1264 passed, 6 deselected`.
 
 Run: `uv run --directory server ruff check && uv run --directory server ruff format --check`
 Expected: `All checks passed!` and every file already formatted.
@@ -2830,7 +2846,7 @@ section 8). The server is already live at https://realoem-searcher.fly.dev (plan
 
 ## Test plan
 
-- [x] uv run pytest: 1263 passed, 6 deselected
+- [x] uv run pytest: 1264 passed, 6 deselected
 - [x] ruff check and ruff format --check
 - [x] claude plugin validate . --strict, and for .claude-plugin/plugin.json
 - [ ] Owner: CHANGELOG dated, then merge, tag v0.2.0 and approve the deploy (plan 2, Task 16)
@@ -2845,7 +2861,8 @@ EOF
   - RealOEM's owner has answered the message of Task 11 without objecting, or 7 days (or the
     longer wait chosen there) have passed without an answer. If they object, stop: do not merge.
     The server can stay up unannounced, or be stopped with
-    `fly scale count 0 --app realoem-searcher` and, so the uptime check stops emailing,
+    `fly scale count 0 --app realoem-searcher` (between `fly auth login` and `fly auth logout`)
+    and, so the uptime check stops emailing,
     `gh workflow disable uptime.yml --repo Cadtastic/RealOEM-Searcher`.
   - `https://realoem-searcher.fly.dev/healthz` answers `ok`, and the latest Uptime run is green.
 
@@ -2892,7 +2909,9 @@ In GitHub, **Actions**, **Deploy**: the run waits for `production`; **Review dep
 ````bash
 gh run list --workflow deploy.yml --repo Cadtastic/RealOEM-Searcher --limit 1 --json status,conclusion --jq '.[0] | .status + " " + .conclusion'
 curl -s https://realoem-searcher.fly.dev/healthz; echo
+fly auth login
 fly releases --app realoem-searcher | head -3
+fly auth logout
 ````
 
 Expected: `completed success` (run the first command again while it shows `queued`, `waiting` or
@@ -2909,7 +2928,8 @@ rm notes-0.2.0.md
 - [ ] **Step 5: Smoke sessions** (PRD section 7; the owner approves their RealOEM requests, a few
   dozen). This repository's marketplace serves 0.2.0 from the merge on, so test from it before
   the plugin collection switches (Step 6). In a second terminal, keep the log while the sessions
-  run: `fly logs --app realoem-searcher > smoke.log` (Ctrl+C at the end).
+  run: `fly logs --app realoem-searcher > smoke.log` (Ctrl+C at the end; log in before and log
+  out after).
   1. **Claude Code.** Remove the 0.1.0 plugin, which runs the old local server
      (`/plugin uninstall realoem-searcher@cadtastic`), then `/plugin marketplace add
      Cadtastic/RealOEM-Searcher` (or `/plugin marketplace update realoem-searcher` if it is
@@ -2955,7 +2975,8 @@ refetch. Then delete `smoke.log`.
   session `/plugin` shows 0.2.0 and `server_status` answers (**Authenticate** in `/mcp` first if
   it asks).
 
-- [ ] **Step 7: The first week.** Every day or two:
+- [ ] **Step 7: The first week.** Every day or two (flyctl between `fly auth login` and `fly auth
+  logout`):
   - Search the app's logs for `refresh_reuse` in Fly's log search (Grafana, linked from the app's
     **Monitoring** page in the Fly dashboard; it keeps several days, while `fly logs` shows only
     what happens while it runs). None are expected. Lines for real Claude clients mean Claude
