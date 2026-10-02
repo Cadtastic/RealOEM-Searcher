@@ -1,0 +1,13 @@
+# Only server/ and brands/ go into the image (hosted design 4.10). Everything else, raw RealOEM
+# captures in .research-raw/ above all, stays out of every build context, local or remote.
+*
+!server/
+!brands/
+server/.venv/
+server/tests/
+**/__pycache__/
+**/.pytest_cache/
+**/.ruff_cache/
+**/*.sqlite3*
+**/*.db
+**/.env*
