@@ -32,6 +32,7 @@ from realoem_mcp.auth.store import AuthStore
 from realoem_mcp.cache import DB_FILENAME, PageCache
 from realoem_mcp.config import Settings
 from realoem_mcp.current_user import CallClock
+from realoem_mcp.http_middleware import RequestLog, SecurityHeaders, SignInLimits
 from realoem_mcp.log_privacy import install_vin_filter
 from realoem_mcp.server import build_server
 from realoem_mcp.shared import build_shared
@@ -179,6 +180,14 @@ def build_http_app(
     app.router.lifespan_context = lifespan
     app.state.store = store  # for tests and the admin's debugging; nothing else reads these
     app.state.services = services
+    # add_middleware puts each one outside the previous: the last added runs first.
+    app.add_middleware(
+        SignInLimits,
+        settings=settings,
+        pending_count=lambda: store.live_pending_count(int(time.time())),
+    )
+    app.add_middleware(RequestLog)
+    app.add_middleware(SecurityHeaders)
     return app
 
 
