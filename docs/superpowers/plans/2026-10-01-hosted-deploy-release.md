@@ -17,11 +17,23 @@
     may do them.
   - **(owner)**: steps that need the maintainer's GitHub and Fly.io accounts, create or handle
     credentials, cost money or make something public. The maintainer does them. Claude (the
-    controller) may explain a step, read its output and, when the owner asks, run the read-only
-    checks (`curl` against the hosted server, `fly status`, `fly logs`). It never creates an
-    account or an app, sees or types a secret, approves a deployment, merges a pull request or
+    controller) may explain a step, read its output and, when the owner asks, run `curl` checks
+    against the hosted server. The owner runs `fly status` and `fly logs` and shares the output:
+    Claude never runs flyctl on the owner's login (see **Fly account safety**). It never creates
+    an account or an app, sees or types a secret, approves a deployment, merges a pull request or
     pushes a tag.
   - **(controller)**: the security review in Task 5, done by a reviewer the controller dispatches.
+- **Fly account safety.**
+  - `fly auth login` only for an owner step that needs it, and `fly auth logout` once that
+    sitting's flyctl work is done (at the latest after Task 11 Step 2, and again after every later
+    step that logs in), so no full-access Fly login stays on a machine where Claude runs commands.
+  - Never `fly launch` (it writes its own `fly.toml` and can create resources; Tasks 2 and 7 do
+    this by hand), `fly secrets set NAME=value` (the value lands in the shell history and any
+    transcript; Task 7 imports the secrets from prompts), or `fly mcp server --claude` (it hands
+    Claude flyctl on the owner's login). No organization-scoped tokens and no tokens without an
+    expiry: the one token in this plan (Task 11) deploys only this app and expires in a year.
+  - Fly's agent setup prompt is not used (reviewed 2026-10-02): it does the things above. These
+    steps replace it.
 - **RealOEM requests.** Only Tasks 8, 10 and 16 send requests to realoem.com, a few dozen at most,
   and only once the owner approves them at that step. Nothing else may, and `REALOEM_LIVE=1` is
   never set.
@@ -34,7 +46,7 @@
   (`fly version` 0.4 or later).
 - TDD for the agent tasks: write the test, run it and see it fail for the stated reason, then
   implement and see it pass. The code blocks were run, task by task, on a clean worktree: with
-  every agent task applied the suite is `1258 passed, 6 deselected` and ruff is clean. Copy code
+  every agent task applied the suite is `1263 passed, 6 deselected` and ruff is clean. Copy code
   exactly. Tasks 13 and 14 change documentation only and have no tests.
 - Commit messages are Conventional Commits, each ending with a blank line and a
   `Co-Authored-By:` trailer naming the model that wrote the change. The commit commands below show
@@ -82,7 +94,7 @@ cd .worktrees/hosted-deploy
 - [ ] **Step 2: Record the baseline**
 
 Run: `uv run --directory server pytest -q`
-Expected: `1252 passed, 6 deselected` (plans 1a and 1b merged). If not, stop and report.
+Expected: `1257 passed, 6 deselected` (plans 1a and 1b merged). If not, stop and report.
 
 ### Task 1: The container image (agent)
 
@@ -217,7 +229,7 @@ Expected: `2 passed`.
 - [ ] **Run the whole suite and the linters**
 
 Run: `uv run --directory server pytest -q`
-Expected: `1254 passed, 6 deselected`.
+Expected: `1259 passed, 6 deselected`.
 
 Run: `uv run --directory server ruff check && uv run --directory server ruff format --check`
 Expected: `All checks passed!` and every file already formatted.
@@ -363,7 +375,7 @@ Expected: `2 passed`.
 - [ ] **Run the whole suite and the linters**
 
 Run: `uv run --directory server pytest -q`
-Expected: `1256 passed, 6 deselected`.
+Expected: `1261 passed, 6 deselected`.
 
 Run: `uv run --directory server ruff check && uv run --directory server ruff format --check`
 Expected: `All checks passed!` and every file already formatted.
@@ -537,7 +549,7 @@ Expected: `2 passed`.
 - [ ] **Run the whole suite and the linters**
 
 Run: `uv run --directory server pytest -q`
-Expected: `1258 passed, 6 deselected`.
+Expected: `1263 passed, 6 deselected`.
 
 Run: `uv run --directory server ruff check && uv run --directory server ruff format --check`
 Expected: `All checks passed!` and every file already formatted.
@@ -554,7 +566,7 @@ git commit -m "ci: deploy on a v* tag after the offline tests, and an uptime che
 - [ ] **Step 1: Everything green**
 
 Run: `uv run --directory server pytest -q`
-Expected: `1258 passed, 6 deselected`.
+Expected: `1263 passed, 6 deselected`.
 
 Run: `uv run --directory server ruff check && uv run --directory server ruff format --check`
 Expected: `All checks passed!` and every file already formatted.
@@ -591,7 +603,7 @@ section 4.10). Merging deploys nothing: a deploy runs only on a v* tag, after th
 
 ## Test plan
 
-- [x] uv run pytest: 1258 passed, 6 deselected (6 new tests)
+- [x] uv run pytest: 1263 passed, 6 deselected (6 new tests)
 - [x] ruff check and ruff format --check
 - [ ] Owner: image built and run locally (plan 2, Task 8)
 - [ ] Owner: first deploy from this branch (plan 2, Task 9), then merge (Task 11)
@@ -884,7 +896,8 @@ Expected: `cache_path` null and your daily quota, and `POST /mcp 200 … github:
   VA33-USA-03-2006-E90-BMW-328i, vehicle_b WB73-USA-06-2005-E92-BMW-335i, main group 11 and
   max_requests 60, and do not call compare_vehicles again." (Both ids are in the vehicle index, so
   no lookup is needed.) If Claude starts a second `compare_vehicles` call, stop it (Esc).
-  Expected: after 50 to 75 seconds Claude Code gets a partial comparison (`complete` false), and
+  Expected: after 50 to 75 seconds Claude Code gets a partial comparison (`complete` false,
+  `stopped_reason` the time-limit message), and
   `fly logs` shows `POST /mcp 200` with a duration of at least 50,000 ms (longer is fine: a
   RealOEM retry near the end can add seconds). A shorter duration means
   the call never reached the limit (its pages were already cached): repeat with main group 61
@@ -963,7 +976,11 @@ Expected: `FLY_API_TOKEN` in the list. The token can deploy only this app and ex
 renew it the same way (a deploy after it expires fails with an authentication error). If the
 `case` reports unexpected output, a token was still created: find it with
 `fly tokens list --app realoem-searcher` and revoke it with `fly tokens revoke <id>` before
-trying again.
+trying again. The setup is done: sign flyctl out (see **Fly account safety**).
+
+````bash
+fly auth logout
+````
 
 - [ ] **Step 3: Protect `v*` tags.** **Settings**, **Rules**, **Rulesets**, **New ruleset**, **New
   tag ruleset**:
@@ -1025,7 +1042,7 @@ cd .worktrees/release-0.2.0
 ````
 
 Run: `uv run --directory server pytest -q`
-Expected: `1258 passed, 6 deselected`. If not, stop and report.
+Expected: `1263 passed, 6 deselected`. If not, stop and report.
 
 - [ ] **Step 2: Change the tests first.** In `server/tests/unit/test_manifests.py`:
 
@@ -1238,7 +1255,7 @@ Expected: `4 passed`.
 - [ ] **Run the whole suite and the linters**
 
 Run: `uv run --directory server pytest -q`
-Expected: `1258 passed, 6 deselected`.
+Expected: `1263 passed, 6 deselected`.
 
 Run: `uv run --directory server ruff check && uv run --directory server ruff format --check`
 Expected: `All checks passed!` and every file already formatted.
@@ -1385,7 +1402,8 @@ RealOEM is a free community site, so each user has a daily budget of RealOEM req
 - **One request at a time for everyone.** The server sends RealOEM one request at a time, at least
   2 seconds apart, so a busy moment can mean a short wait. A tool call that cannot finish in about
   50 seconds stops and says so; calling it again continues from the cache. `compare_vehicles`
-  returns the diagrams it compared so far instead.
+  instead returns the diagrams it compared so far, also when the queue is full or the day's
+  lookups run out, and says why.
 
 ## Privacy
 
@@ -1625,8 +1643,8 @@ connect it once: `/mcp` in Claude Code, or **Connect** in the plugin's Connector
   is off.
 - **Shared, careful use of RealOEM.** One request at a time and at least 2 seconds apart for all
   users together, a short queue with a per-call time limit, and a shared page cache (400 MB) so a
-  page one user fetched is free for everyone. `compare_vehicles` returns its partial result when
-  the time is up.
+  page one user fetched is free for everyone. `compare_vehicles` returns its partial result, with
+  a `stopped_reason`, when the time, the queue or the day's lookups run out.
 - **Privacy.** VIN pages are cached for the user who asked only, for at most 30 days. Logs never
   carry a VIN, a token or the query string of a sign-in request. See the README's Privacy section.
 
@@ -2778,7 +2796,7 @@ git commit -m "docs: ARD for the hosted server" -m "Co-Authored-By: Claude Sonne
 - [ ] **Step 1: Everything green**
 
 Run: `uv run --directory server pytest -q`
-Expected: `1258 passed, 6 deselected`.
+Expected: `1263 passed, 6 deselected`.
 
 Run: `uv run --directory server ruff check && uv run --directory server ruff format --check`
 Expected: `All checks passed!` and every file already formatted.
@@ -2812,7 +2830,7 @@ section 8). The server is already live at https://realoem-searcher.fly.dev (plan
 
 ## Test plan
 
-- [x] uv run pytest: 1258 passed, 6 deselected
+- [x] uv run pytest: 1263 passed, 6 deselected
 - [x] ruff check and ruff format --check
 - [x] claude plugin validate . --strict, and for .claude-plugin/plugin.json
 - [ ] Owner: CHANGELOG dated, then merge, tag v0.2.0 and approve the deploy (plan 2, Task 16)
