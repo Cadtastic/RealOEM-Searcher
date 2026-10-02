@@ -10,10 +10,13 @@ dependencies = [
     "platformdirs>=4",
     "pydantic>=2.11,<3",
     "selectolax>=0.4,<0.5",
+    "starlette>=1.7,<2",
+    "uvicorn>=0.54,<1",
 ]
 
 [project.scripts]
 realoem-mcp = "realoem_mcp.server:main"
+realoem-mcp-http = "realoem_mcp.http_app:main"
 
 [dependency-groups]
 dev = [
